@@ -940,7 +940,7 @@ func main() {
 	installCmd := "pip3 install ovs pyOpenSSL"
 	dtraceInstallOut, dtraceInstallErr, err := execInPod(coreclient, restconfig, ovnNamespace, srcPodInfo.OvnKubeContainerPodName, "ovnkube-node", installCmd, "")
 	if err != nil {
-		klog.V(0).Infof("ovn-detrace error %v stdOut: %s\n stdErr: %s", err, dtraceInstallOut, dtraceInstallErr)
+		klog.V(0).Infof("ovn-detrace error in pod %s, container %s. Error '%v', stdOut: '%s'\n stdErr: '%s'", srcPodInfo.OvnKubeContainerPodName, "ovnkube-node", err, dtraceInstallOut, dtraceInstallErr)
 		os.Exit(-1)
 	}
 	fmt.Printf("install ovn-detrace Output: %s\n", dtraceInstallOut)
@@ -948,7 +948,7 @@ func main() {
 	installCmd2 := "pip3 install ovs pyOpenSSL"
 	dtraceInstallOut2, dtraceInstallErr2, err := execInPod(coreclient, restconfig, ovnNamespace, dstPodInfo.OvnKubeContainerPodName, "ovnkube-node", installCmd2, "")
 	if err != nil {
-		klog.V(0).Infof("ovn-detrace error %v stdOut: %s\n stdErr: %s", err, dtraceInstallOut2, dtraceInstallErr2)
+		klog.V(0).Infof("ovn-detrace error in pod %s, container %s. Error '%v', stdOut: '%s'\n stdErr: '%s'", dstPodInfo.OvnKubeContainerPodName, "ovnkube-node", err, dtraceInstallOut2, dtraceInstallErr2)
 		os.Exit(-1)
 	}
 	fmt.Printf("install ovn-detrace Output: %s\n", dtraceInstallOut2)
