@@ -394,7 +394,7 @@ create_kind_cluster() {
   cat "${KUBECONFIG}"
 }
 
-docker_disable_ipv6() {
+docker_enable_ipv6() {
   # Docker disables IPv6 globally inside containers except in the eth0 interface.
   # Kind enables IPv6 globally the containers ONLY for dual-stack and IPv6 deployments.
   # Ovnkube-node tries to move all global addresses from the gateway interface to the
@@ -406,6 +406,7 @@ docker_disable_ipv6() {
   for n in $KIND_NODES; do
     docker exec "$n" sysctl net.ipv6.conf.all.disable_ipv6=0
     docker exec "$n" sysctl net.ipv6.conf.all.forwarding=1
+    docker exec "$n" bash -c "echo -e 'net.ipv6.conf.all.disable_ipv6=0\nnet.ipv6.conf.all.forwarding=1' > /etc/sysctl.d/50-enable-ipv6.conf"
   done
 }
 
@@ -560,7 +561,7 @@ detect_apiserver_ip
 check_ipv6
 set_cluster_cidr_ip_families
 create_kind_cluster
-docker_disable_ipv6
+docker_enable_ipv6
 coredns_patch
 build_ovn_image
 detect_apiserver_url

@@ -84,7 +84,7 @@ func saveIPAddress(oldLink, newLink netlink.Link, addrs []netlink.Addr) error {
 			// Add to newLink
 			addr.Label = newLink.Attrs().Name
 			if err := netLinkOps.AddrAdd(newLink, &addr); err != nil {
-				klog.Errorf("Add addr to newLink %q failed: %v", addr.Label, err)
+				klog.Errorf("Add addr %q to newLink %q failed: %v", addr.String(), addr.Label, err)
 				return err
 			}
 			klog.Infof("Successfully saved addr %q to newLink %q", addr.String(), addr.Label)
@@ -221,33 +221,44 @@ func NicToBridge(iface string) (string, error) {
 
 	setupDefaultFile()
 
+	return bridge, MigrateIpAndRoutingToBridge(iface, bridge)
+}
+
+// MigrateIpAndRoutingToBridge moves the IP address and routes of 'iface'
+// to an existing OVS bridge.
+func MigrateIpAndRoutingToBridge(iface string, bridge string) error {
+	ifaceLink, err := netLinkOps.LinkByName(iface)
+	if err != nil {
+		return err
+	}
+
 	// Get ip addresses and routes before any real operations.
 	family := syscall.AF_UNSPEC
 	addrs, err := netLinkOps.AddrList(ifaceLink, family)
 	if err != nil {
-		return "", err
+		return err
 	}
 	routes, err := netLinkOps.RouteList(ifaceLink, family)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	bridgeLink, err := netLinkOps.LinkByName(bridge)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	// save ip addresses to bridge.
 	if err = saveIPAddress(ifaceLink, bridgeLink, addrs); err != nil {
-		return "", err
+		return err
 	}
 
 	// save routes to bridge.
 	if err = saveRoute(ifaceLink, bridgeLink, routes); err != nil {
-		return "", err
+		return err
 	}
 
-	return bridge, nil
+	return nil
 }
 
 // BridgeToNic moves the IP address and routes of internal port of the bridge to

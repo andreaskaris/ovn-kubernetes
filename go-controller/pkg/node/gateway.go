@@ -182,7 +182,8 @@ func gatewayInitInternal(nodeName, gwIntf string, subnets []*net.IPNet, gwNextHo
 
 	if bridgeName, _, err = util.RunOVSVsctl("--", "port-to-br", gwIntf); err == nil {
 		// This is an OVS bridge's internal port
-		uplinkName, err = util.GetNicName(bridgeName)
+		uplinkName = gwIntf
+		err = util.MigrateIpAndRoutingToBridge(gwIntf, bridgeName)
 		if err != nil {
 			return bridgeName, uplinkName, nil, nil, err
 		}
