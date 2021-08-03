@@ -22,14 +22,10 @@ tests locally.
 The tests are broken into a set of shards, which is just a grouping of tests,
 and each shard is run in a separate job in parallel. Below is an example of
 the shards (which may change in the future):
-- shard-n-other
-  - All E2E tests that match `[sig-network] N` and do NOT have P as their sixth
-  letter after the N (i.e. Roughly all `[sig-network] Networking ...` tests.), and all other tests
-  that don't match the rule below
-- shard-np
-  - All E2E tests that match `[sig-network] N` and DO have a P as their sixth
-  letter after the N. (i.e. Roughly all `[sig-network] NetworkPolicy ...`
-  tests.)
+- shard-network
+  - All E2E tests that match `[sig-network]`
+- shard-conformance
+  - All E2E tests that match `[Conformance]` and [sig-network]
 - shard-test
   - Single E2E test that matches the name of the test specified with a regex. See bottom of this document for an example.
 - control-plane
@@ -91,11 +87,12 @@ pushd $GOPATH/src/k8s.io/kubernetes/
 make WHAT="test/e2e/e2e.test vendor/github.com/onsi/ginkgo/ginkgo cmd/kubectl"
 rm -rf .git
 
-cp _output/local/go/bin/e2e.test $GOPATH/bin/.
+cp _output/local/go/bin/e2e.test /usr/local/bin/
 
-sudo cp /usr/bin/kubectl /usr/bin/kubectl.bak
-sudo cp _output/local/go/bin/kubectl /usr/bin/kubectl-$K8S_VERSION
-sudo ln -s /usr/bin/kubectl-$K8S_VERSION /usr/bin/kubectl
+sudo mv $(which kubectl){,.bak}
+sudo cp _output/local/go/bin/kubectl /usr/local/bin/kubectl-$K8S_VERSION
+sudo ln -s /usr/local/bin/kubectl-$K8S_VERSION /usr/local/bin/kubectl
+cp ./_output/local/go/bin/ginkgo /usr/local/bin/
 popd
 ```
 
@@ -125,25 +122,35 @@ tests look for the kube config file in a special location, so make a copy:
 cp ~/admin.conf ~/.kube/kind-config-kind
 ```
 
-To run the desired shard, use the following (each shard can take +30 mins to
+At time of this writing, there are 3 shards:
+- shard-network
+- shard-conformance
+- shard-test
+
+There also is a specific job for control-plane testing.
+
+To run the desired shard, go to your ovn-kubernetes location:use the following (each shard can take +30 mins to
 run):
 
 ```
-$ cd $GOPATH/src/github.com/ovn-org/ovn-kubernetes
-
-$ pushd test
-$ make shard-n-other
-$ make shard-np
-$ GITHUB_WORKSPACE=$GOPATH/src/github.com/ovn-org/ovn-kubernetes make control-plane
-$ popd
+$ OVN_KUB_DIR=$GOPATH/src/github.com/ovn-org/ovn-kubernetes
+$ cd $OVN_KUB_DIR
 ```
+
+And then run either of the 4 following options:
+```
+$ make -C test shard-network
+$ make -C test shard-conformance
+$ make -C test shard-test
+$ GITHUB_WORKSPACE=$OVN_KUB_DIR make -C test control-plane
+```
+> You can determine available shard names by running `grep 'shard-' test/scripts/e2e-kind.sh`
 
 To run a single test instead, target the shard-test action, as follows:
 
 ```
 $ cd $GOPATH/src/github.com/ovn-org/ovn-kubernetes
-$ pushd test
-$ make shard-test WHAT="should enforce egress policy allowing traffic to a server in a different namespace based on PodSelector and NamespaceSelector"
+$ make -C test shard-test WHAT="should enforce egress policy allowing traffic to a server in a different namespace based on PodSelector and NamespaceSelector"
 $ popd
 ```
 

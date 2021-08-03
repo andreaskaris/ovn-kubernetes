@@ -65,11 +65,11 @@ IPV4_ONLY_TESTS="
 # See: https://github.com/ovn-org/ovn-kubernetes/issues/1683
 IPBlock.CIDR and IPBlock.Except
 
-# shard-n Tests
+# shard-network Tests starting with string Network
 #  See: https://github.com/kubernetes/kubernetes/pull/94136
 Network.+should resolve connection reset issue
 
-# shard-np Tests
+# shard-network Tests starting with string NetworkPolicy
 #  See: https://github.com/ovn-org/ovn-kubernetes/issues/1517
 NetworkPolicy.+should allow egress access to server in CIDR block
 "
