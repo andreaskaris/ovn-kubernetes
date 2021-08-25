@@ -110,12 +110,12 @@ jobs:
         name: test-image-pr
         path: dist/images/_output/image-pr.tar
 
-    - name: Upload Junit Reports
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: junit-unit
-        path: '**/_artifacts/**.xml'
+        #    - name: Upload Junit Reports
+        #      if: always()
+        #      uses: actions/upload-artifact@v2
+        #      with:
+        #        name: junit-unit
+        #        path: '**/_artifacts/**.xml'
 
     - name: Submit code coverage to Coveralls
       env:
@@ -202,12 +202,12 @@ jobs:
         docker exec ovn-worker crictl images
         docker exec ovn-worker2 crictl images 
 
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
+        #    - name: Upload logs
+        #      if: always()
+        #      uses: actions/upload-artifact@v2
+        #      with:
+        #        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+        #        path: /tmp/kind/logs
 
     - uses: actions/download-artifact@v2
       with:
@@ -232,12 +232,12 @@ jobs:
         mkdir -p /tmp/kind/logs-kind-pr-branch
         kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
 
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
-        path: /tmp/kind/logs-kind-pr-branch
+        #    - name: Upload logs
+        #      if: always()
+        #      uses: actions/upload-artifact@v2
+        #      with:
+        #        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
+        #        path: /tmp/kind/logs-kind-pr-branch
 
   e2e:
     name: e2e
