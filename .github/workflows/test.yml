@@ -335,38 +335,38 @@ jobs:
     - name: Run Tests
       run: |
         make -C test ${{ matrix.target }}
-    - name: Upload Junit Reports
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: './test/_artifacts/*.xml'
-
-    - name: Generate Test Report
-      id: xunit-viewer
-      if: always()
-      uses: AutoModality/action-xunit-viewer@v1
-      with:
-        results: ./test/_artifacts/
-
-    - name: Upload Test Report
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: test-report-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: './test/_artifacts/index.html'
-
-    - name: Export logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
+        #    - name: Upload Junit Reports
+        #      if: always()
+        #      uses: actions/upload-artifact@v2
+        #      with:
+        #        name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
+        #        path: './test/_artifacts/*.xml'
+        #
+        #    - name: Generate Test Report
+        #      id: xunit-viewer
+        #      if: always()
+        #      uses: AutoModality/action-xunit-viewer@v1
+        #      with:
+        #        results: ./test/_artifacts/
+        #
+        #    - name: Upload Test Report
+        #      if: always()
+        #      uses: actions/upload-artifact@v2
+        #      with:
+        #        name: test-report-${{ env.JOB_NAME }}-${{ github.run_id }}
+        #        path: './test/_artifacts/index.html'
+        #
+        #    - name: Export logs
+        #      if: always()
+        #      run: |
+        #        mkdir -p /tmp/kind/logs
+        #        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+        #    - name: Upload logs
+        #      if: always()
+        #      uses: actions/upload-artifact@v2
+        #      with:
+        #        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+        #        path: /tmp/kind/logs
 
   e2e-dual-conversion:
     name: e2e-dual-conversion
