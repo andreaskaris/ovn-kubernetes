@@ -249,9 +249,10 @@ jobs:
       matrix:
         target:
             # hybrid-overlay = multicast-enable = emptylb-enable = false
-          - "shard-conformance"
+            # - "shard-conformance"
             # hybrid-overlay = multicast-enable = emptylb-enable = true
-          - "control-plane"
+            # - "control-plane"
+            - "shard-test WHAT='should provide /etc/hosts entries for the cluster'" 
         ha: ["HA", "noHA"]
         disable-snat-multiple-gws: ["noSnatGW", "snatGW"]
         gateway-mode: ["local", "shared"]
