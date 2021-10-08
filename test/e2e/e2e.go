@@ -284,6 +284,52 @@ func createServiceForPodsWithLabel(f *framework.Framework, namespace string, ser
 	return res.Spec.ClusterIP, nil
 }
 
+func installDebugCmdDeps(containerName string) {
+	args := []string{
+		"docker",
+		"exec",
+		containerName,
+		"/bin/bash",
+		"-c",
+		"apt-get update && apt-get install tcpdump -y && apt-get install iproute2 -y",
+	}
+
+	output, err := runCommand(args...)
+	if err != nil {
+		framework.Logf("Error running command %c:\n%v", args, err)
+		return
+	}
+	framework.Logf("Result of command %c:\n%v", args, output)
+}
+
+func debugCmd(containerName string, stop chan bool) {
+	args := []string{
+		"docker",
+		"exec",
+		containerName,
+		"/bin/bash",
+		"-c",
+		"ip a && ip n && timeout 2 tcpdump -nnei eth0",
+	}
+
+	framework.Logf("Started debugCmd with args %v", args)
+
+	for {
+		select {
+		case _ = <-stop:
+			return
+		default:
+			time.Sleep(10 * time.Millisecond)
+			output, err := runCommand(args...)
+			if err != nil {
+				framework.Logf("Error running command %v:\n%v", args, err)
+				continue
+			}
+			framework.Logf("Result of command %v:\n%v", args, output)
+		}
+	}
+}
+
 func createClusterExternalContainer(containerName string, containerImage string, dockerArgs []string, entrypointArgs []string) (string, string) {
 	args := []string{"docker", "run", "-itd"}
 	args = append(args, dockerArgs...)
@@ -686,7 +732,7 @@ var _ = ginkgo.Describe("test e2e pod connectivity to host addresses", func() {
 
 	f := framework.NewDefaultFramework(svcname)
 
-	ginkgo.BeforeEach(func(){
+	ginkgo.BeforeEach(func() {
 		targetIP = "123.123.123.123"
 		singleIPMask = "32"
 		if IsIPv6Cluster(f.ClientSet) {
@@ -893,7 +939,9 @@ var _ = ginkgo.Describe("e2e egress IP validation", func() {
 			lastLine := logLines[len(logLines)-1]
 			for i := 0; i < len(verifyIPs); i++ {
 				if strings.Contains(lastLine, verifyIPs[i]) {
+					framework.Logf("the test external container contains a trace of IP: %v, removing it from the slice", verifyIPs[i])
 					verifyIPs = removeSliceElement(verifyIPs, i)
+					framework.Logf("outstanding IPs: %v, last log line with match: %s", verifyIPs, lastLine)
 					break
 				}
 			}
@@ -905,6 +953,7 @@ var _ = ginkgo.Describe("e2e egress IP validation", func() {
 				framework.Logf("the test external container did have a trace of the IPs: %v being logged, it should not have, last logs: %s", verifyIPs, logLines[len(logLines)-1])
 				return false, nil
 			}
+
 			return true, nil
 		}
 	}
@@ -1103,6 +1152,9 @@ spec:
 
 		pod2IP := getPodAddress(pod2Name, f.Namespace.Name)
 		ginkgo.By("4. Check connectivity from both to an external \"node\" and verify that the IPs are both of the above")
+		stop := make(chan bool)
+		installDebugCmdDeps(targetNode.name)
+		go debugCmd(targetNode.name, stop)
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod1Name, podNamespace.Name, true, []string{egressIP1.String(), egressIP2.String()}))
 		framework.ExpectNoError(err, "Step 4. Check connectivity from first to an external \"node\" and verify that the IPs are both of the above, failed: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod2Name, podNamespace.Name, true, []string{egressIP1.String(), egressIP2.String()}))
@@ -1124,6 +1176,7 @@ spec:
 		ginkgo.By("8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP.")
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod2Name, podNamespace.Name, true, []string{pod2Node.nodeIP}))
 		framework.ExpectNoError(err, "Step 8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
+		stop <- true
 
 		ginkgo.By("9. Check connectivity from the other one to an external \"node\" and verify that the IPs are both of the above")
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod1Name, podNamespace.Name, true, []string{egressIP1.String(), egressIP2.String()}))
