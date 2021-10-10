@@ -933,9 +933,9 @@ func (e *egressIPController) handleEgressReroutePolicy(podIps []net.IP, statuses
 // is the better option and will avoid issues with different order within the compared
 // slices
 func isStringSetEqual(x, y []string) bool {
-        s1 := sets.NewString(x...)
-        s2 := sets.NewString(y...)
-        return s1.Equal(s2)
+	s1 := sets.NewString(x...)
+	s2 := sets.NewString(y...)
+	return s1.Equal(s2)
 }
 
 func (e *egressIPController) createEgressReroutePolicy(filterOption, egressIPName string, gatewayRouterIPs []string) error {
@@ -999,7 +999,7 @@ func (e *egressIPController) deleteEgressReroutePolicy(filterOption, egressIPNam
 			Model:          &logicalRouter,
 			ModelPredicate: func(lr *nbdb.LogicalRouter) bool { return lr.Name == types.OVNClusterRouter },
 			OnModelMutations: []interface{}{
-					&logicalRouter.Policies,
+				&logicalRouter.Policies,
 			},
 		},
 	}

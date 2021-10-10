@@ -1,7 +1,7 @@
 package e2e
 
 import (
-	//"runtime"
+	// "runtime"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1177,7 +1177,7 @@ spec:
 		ginkgo.By("8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP.")
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod2Name, podNamespace.Name, true, []string{pod2Node.nodeIP}))
 		//if err != nil {
-			//runtime.Breakpoint()
+		//	runtime.Breakpoint()
 		//}
 		framework.ExpectNoError(err, "Step 8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
 		stop <- true
