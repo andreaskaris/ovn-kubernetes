@@ -269,10 +269,13 @@ func (m *ModelClient) update(lookUpModel interface{}, opModel *OperationModel) (
 }
 
 func (m *ModelClient) mutate(lookUpModel interface{}, opModel *OperationModel, mutator ovsdb.Mutator) (o []ovsdb.Operation, err error) {
+	klog.V(5).Infof("akaris: OnModelMutations: %#v", opModel.OnModelMutations)
+	klog.V(5).Infof("akaris: OnModelMutations: %#v, mutator: %#v (%[2]T)", opModel.OnModelMutations, mutator)
 	if opModel.OnModelMutations == nil {
 		return nil, nil
 	}
 	modelMutations := BuildMutationsFromFields(opModel.OnModelMutations, mutator)
+	klog.V(5).Infof("akaris: modelMutations: %#v", modelMutations)
 	if len(modelMutations) == 0 {
 		return nil, nil
 	}

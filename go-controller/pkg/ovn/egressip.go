@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -929,6 +928,16 @@ func (e *egressIPController) handleEgressReroutePolicy(podIps []net.IP, statuses
 	return nil
 }
 
+// reflect.DeepEqual considers the order of elements (plus possible duplication)
+// given that neither order nor duplication of nexthop IPs matters, simply comparing sets
+// is the better option and will avoid issues with different order within the compared
+// slices
+func isStringSetEqual(x, y []string) bool {
+        s1 := sets.NewString(x...)
+        s2 := sets.NewString(y...)
+        return s1.Equal(s2)
+}
+
 func (e *egressIPController) createEgressReroutePolicy(filterOption, egressIPName string, gatewayRouterIPs []string) error {
 	logicalRouter := nbdb.LogicalRouter{}
 	logicalRouterPolicy := nbdb.LogicalRouterPolicy{
@@ -944,7 +953,7 @@ func (e *egressIPController) createEgressReroutePolicy(filterOption, egressIPNam
 		{
 			Model: &logicalRouterPolicy,
 			ModelPredicate: func(lrp *nbdb.LogicalRouterPolicy) bool {
-				return lrp.Match == filterOption && lrp.Priority == types.EgressIPReroutePriority && reflect.DeepEqual(lrp.Nexthops, gatewayRouterIPs) && lrp.ExternalIDs["name"] == egressIPName
+				return lrp.Match == filterOption && lrp.Priority == types.EgressIPReroutePriority && isStringSetEqual(lrp.Nexthops, gatewayRouterIPs) && lrp.ExternalIDs["name"] == egressIPName
 			},
 			DoAfter: func() {
 				if logicalRouterPolicy.UUID != "" {
@@ -973,11 +982,16 @@ func (e *egressIPController) deleteEgressReroutePolicy(filterOption, egressIPNam
 	opsModel := []libovsdbops.OperationModel{
 		{
 			ModelPredicate: func(lrp *nbdb.LogicalRouterPolicy) bool {
-				return lrp.Match == filterOption && lrp.Priority == types.EgressIPReroutePriority && reflect.DeepEqual(lrp.Nexthops, gatewayRouterIPs) && lrp.ExternalIDs["name"] == egressIPName
+				klog.V(5).Infof("akaris: ModelPredicate: Comparing '%v'->'%v' (result '%v')", lrp.Match, filterOption, lrp.Match == filterOption)
+				klog.V(5).Infof("akaris: ModelPredicate: Comparing '%v'->'%v' (result '%v')", lrp.Priority, types.EgressIPReroutePriority, lrp.Priority == types.EgressIPReroutePriority)
+				klog.V(5).Infof("akaris: ModelPredicate: Comparing '%v'->'%v' (result '%v')", lrp.Nexthops, gatewayRouterIPs, isStringSetEqual(lrp.Nexthops, gatewayRouterIPs))
+				klog.V(5).Infof("akaris: ModelPredicate: Comparing '%v'->'%v' (result '%v')", lrp.ExternalIDs["name"], egressIPName, lrp.ExternalIDs["name"] == egressIPName)
+				return lrp.Match == filterOption && lrp.Priority == types.EgressIPReroutePriority && isStringSetEqual(lrp.Nexthops, gatewayRouterIPs) && lrp.ExternalIDs["name"] == egressIPName
 			},
 			ExistingResult: &logicalRouterPolicyRes,
 			DoAfter: func() {
 				logicalRouter.Policies = libovsdbops.ExtractUUIDsFromModels(&logicalRouterPolicyRes)
+				klog.V(5).Infof("akaris: DoAfter: logicalRouter.Policies = %v", logicalRouter.Policies)
 			},
 			BulkOp: true,
 		},
@@ -985,7 +999,7 @@ func (e *egressIPController) deleteEgressReroutePolicy(filterOption, egressIPNam
 			Model:          &logicalRouter,
 			ModelPredicate: func(lr *nbdb.LogicalRouter) bool { return lr.Name == types.OVNClusterRouter },
 			OnModelMutations: []interface{}{
-				&logicalRouter.Policies,
+					&logicalRouter.Policies,
 			},
 		},
 	}
