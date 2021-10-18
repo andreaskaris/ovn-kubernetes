@@ -28,10 +28,10 @@ var nbClusterStatusRetryCnt, sbClusterStatusRetryCnt int32
 const maxClusterStatusRetry = 10
 
 type dbProperties struct {
-	appCtl                func(args ...string) (string, string, error)
-	dbName                string
-	electionTimer         int
-	clusterStatusRetryCnt *int32
+	appCtl        func(timeout int, args ...string) (string, string, error)
+	dbAlias       string
+	dbName        string
+	electionTimer int
 }
 
 func RunDBChecker(kclient kube.Interface, stopCh <-chan struct{}) {
@@ -73,16 +73,37 @@ func ensureOvnDBState(db string, kclient kube.Interface, stopCh <-chan struct{})
 			}
 		}
 	}
-	properties := propertiesForDB(db)
+	dbProperties := propertiesForDB(db)
 
 	for {
 		select {
 		case <-ticker.C:
 			klog.V(5).Infof("Ensure routines for Raft db: %s kicked off by ticker", db)
-			ensureLocalRaftServerID(db)
-			ensureClusterRaftMembership(db, kclient)
-			if properties.electionTimer != 0 {
-				ensureElectionTimeout(properties)
+			if err := ensureLocalRaftServerID(dbProperties); err != nil {
+				klog.Error(err)
+				if errors.Is(err, DBError) {
+					updateDBRetryCounter(&dbRetry, dbProperties)
+				}
+			} else {
+				atomic.StoreInt32(&dbRetry, 0)
+			}
+			if err := ensureClusterRaftMembership(dbProperties, kclient); err != nil {
+				klog.Error(err)
+				if errors.Is(err, DBError) {
+					updateDBRetryCounter(&dbRetry, dbProperties)
+				}
+			} else {
+				atomic.StoreInt32(&dbRetry, 0)
+			}
+			if dbProperties.electionTimer != 0 {
+				if err := ensureElectionTimeout(dbProperties); err != nil {
+					klog.Error(err)
+					if errors.Is(err, DBError) {
+						updateDBRetryCounter(&dbRetry, dbProperties)
+					}
+				} else {
+					atomic.StoreInt32(&dbRetry, 0)
+				}
 			}
 		case <-stopCh:
 			ticker.Stop()
@@ -91,43 +112,34 @@ func ensureOvnDBState(db string, kclient kube.Interface, stopCh <-chan struct{})
 	}
 }
 
-// ensureLocalRaftServerID is used to ensure there is no stale member in the Raft cluster with our address
-func ensureLocalRaftServerID(db string) {
-	var dbName string
-	var appCtl func(args ...string) (string, string, error)
-	clusterStatusRetryCnt := &nbClusterStatusRetryCnt
-	if strings.Contains(db, "ovnnb") {
-		dbName = "OVN_Northbound"
-		appCtl = util.RunOVNNBAppCtl
+func updateDBRetryCounter(retryCounter *int32, db *dbProperties) {
+	if atomic.LoadInt32(retryCounter) > maxDBRetry {
+		//delete the db file and start master
+		_, err := resetRaftDB(db)
+		if err != nil {
+			klog.Warningf(err.Error())
+		}
+		atomic.StoreInt32(retryCounter, 0)
 	} else {
-		dbName = "OVN_Southbound"
-		appCtl = util.RunOVNSBAppCtl
-		clusterStatusRetryCnt = &sbClusterStatusRetryCnt
+		atomic.AddInt32(retryCounter, 1)
+		klog.Infof("Failed to get cluster status for: %s, number of retries: %d", db, *retryCounter)
 	}
+}
 
-	out, stderr, err := util.RunOVSDBTool("db-sid", db)
+// ensureLocalRaftServerID is used to ensure there is no stale member in the Raft cluster with our address
+func ensureLocalRaftServerID(db *dbProperties) error {
+	out, stderr, err := db.appCtl(5, "cluster/sid", db.dbName)
 	if err != nil {
-		klog.Warningf("Unable to get db server ID for: %s, stderr: %v, err: %v", db, stderr, err)
-		return
+		return fmt.Errorf("%w: unable to get db server ID for: %s, stderr: %v, err: %v", DBError, db.dbAlias, stderr, err)
 	}
 	if len(out) < 4 {
-		klog.Errorf("Invalid db id found: %s for db: %s", out, db)
-		return
+		return fmt.Errorf("%w: invalid db id found: %s for db: %s", DBError, out, db.dbAlias)
 	}
 	// server ID in raft membership is only first 4 char prefix
 	serverID := out[:4]
-	out, stderr, err = appCtl("cluster/status", dbName)
+	out, stderr, err = db.appCtl(5, "cluster/status", db.dbName)
 	if err != nil {
-		klog.Warningf("Unable to get cluster status for: %s, stderr: %v, err: %v", db, stderr, err)
-		if atomic.LoadInt32(clusterStatusRetryCnt) > maxClusterStatusRetry {
-			//delete the db file and start master
-			resetRaftDB(db)
-			atomic.StoreInt32(clusterStatusRetryCnt, 0)
-		} else {
-			atomic.AddInt32(clusterStatusRetryCnt, 1)
-			klog.Infof("Failed to get cluster status for: %s, number of retries: %d", db, *clusterStatusRetryCnt)
-		}
-		return
+		return fmt.Errorf("%w: unable to get cluster status for: %s, stderr: %v, err: %v", DBError, db.dbAlias, stderr, err)
 	}
 	// on retrieving cluster/status successfully reset the retry counter.
 	atomic.StoreInt32(clusterStatusRetryCnt, 0)
@@ -135,8 +147,7 @@ func ensureLocalRaftServerID(db string) {
 	r, _ := regexp.Compile(`Address: *((ssl|tcp):[?[a-z0-9.:]+]?)`)
 	matches := r.FindStringSubmatch(out)
 	if len(matches) < 2 {
-		klog.Warningf("Unable to parse Address for db: %s, output: %s", db, out)
-		return
+		return fmt.Errorf("unable to parse Address for db: %s, output: %s", db.dbAlias, out)
 	}
 	addr := matches[1]
 	// look for current servers in raft cluster with the same address
@@ -150,32 +161,25 @@ func ensureLocalRaftServerID(db string) {
 		if member[1] != serverID {
 			// stale entry found for this node with same adddress, need to kick
 			klog.Infof("Previous stale member found: %s...kicking", member[1])
-			_, stderr, err = appCtl("cluster/kick", dbName, member[1])
+			_, stderr, err = db.appCtl(5, "cluster/kick", db.dbName, member[1])
 			if err != nil {
-				klog.Errorf("Error while kicking old Raft member: %s, for address: %s in db: %s,"+
-					"stderr: %v, error: %v", member[1], addr, db, stderr, err)
+				return fmt.Errorf("error while kicking old Raft member: %s, for address: %s in db: %s,"+
+					"stderr: %v, error: %v", member[1], addr, db.dbAlias, stderr, err)
 			}
 		}
 	}
 }
 
 // ensureClusterRaftMembership ensures there are no unknown members in the current Raft cluster
-func ensureClusterRaftMembership(db string, kclient kube.Interface) {
+func ensureClusterRaftMembership(db *dbProperties, kclient kube.Interface) error {
 	var knownMembers, knownServers []string
 
-	var dbName string
-	var appCtl func(args ...string) (string, string, error)
-	clusterStatusRetryCnt := &nbClusterStatusRetryCnt
-
-	if strings.Contains(db, "ovnnb") {
-		dbName = "OVN_Northbound"
-		appCtl = util.RunOVNNBAppCtl
+	if db.dbName == "OVN_Northbound" {
 		knownMembers = strings.Split(config.OvnNorth.Address, ",")
-	} else {
-		dbName = "OVN_Southbound"
-		appCtl = util.RunOVNSBAppCtl
+	} else if db.dbName == "OVN_Southbound" {
 		knownMembers = strings.Split(config.OvnSouth.Address, ",")
-		clusterStatusRetryCnt = &sbClusterStatusRetryCnt
+	} else {
+		return fmt.Errorf("invalid database name %s for database %s", db.dbName, db.dbAlias)
 	}
 	for _, knownMember := range knownMembers {
 		server := strings.Split(knownMember, ":")
@@ -185,18 +189,9 @@ func ensureClusterRaftMembership(db string, kclient kube.Interface) {
 		}
 		knownServers = append(knownServers, server[1])
 	}
-	out, stderr, err := appCtl("cluster/status", dbName)
+	out, stderr, err := db.appCtl(5, "cluster/status", db.dbName)
 	if err != nil {
-		klog.Warningf("Unable to get cluster status for: %s, stderr: %v, err: %v", db, stderr, err)
-		if atomic.LoadInt32(clusterStatusRetryCnt) > maxClusterStatusRetry {
-			//delete the db file and start master
-			resetRaftDB(db)
-			atomic.StoreInt32(clusterStatusRetryCnt, 0)
-		} else {
-			atomic.AddInt32(clusterStatusRetryCnt, 1)
-			klog.Infof("Failed to get cluster status for: %s, number of retries: %d", db, *clusterStatusRetryCnt)
-		}
-		return
+		return fmt.Errorf("%w: Unable to get cluster status for: %s, stderr: %s, err: %v", DBError, db.dbAlias, stderr, err)
 	}
 	// on retrieving cluster/status successfully reset the retry counter.
 	atomic.StoreInt32(clusterStatusRetryCnt, 0)
@@ -243,11 +238,11 @@ func ensureClusterRaftMembership(db string, kclient kube.Interface) {
 		if !memberFound && (len(members)-kickedMembersCount) > 3 {
 			// unknown member and we have enough members its safe to kick the unknown address
 			klog.Infof("Unknown Raft member found: %s, %s...kicking", member[1], member[2])
-			_, stderr, err = appCtl("cluster/kick", dbName, member[1])
+			_, stderr, err = db.appCtl(5, "cluster/kick", db.dbName, member[1])
 			if err != nil {
 				// warn only: we might fail to kick since other nodes will also be trying to kick the member
 				klog.Warningf("Error while kicking old Raft member: %s, for address: %s in db: %s,"+
-					"stderr: %v, err: %v", member[1], member[2], db, stderr, err)
+					"stderr: %v, err: %v", member[1], member[2], db.dbAlias, stderr, err)
 				continue
 			}
 			kickedMembersCount = kickedMembersCount + 1
@@ -255,9 +250,10 @@ func ensureClusterRaftMembership(db string, kclient kube.Interface) {
 	}
 }
 
-// ensureClusterRaftMembership ensures there are no unknown members in the current Raft cluster
-func ensureElectionTimeout(db *dbProperties) {
-	out, stderr, err := db.appCtl("cluster/status", db.dbName)
+// ensureElectionTimeout ensures that the election timer is increased on the leader only
+// the election timer can be raised to max 2 times the current election timer per call of this function
+func ensureElectionTimeout(db *dbProperties) error {
+	out, stderr, err := db.appCtl(5, "cluster/status", db.dbName)
 	if err != nil {
 		klog.Warningf("Unable to get cluster status for: %s, stderr: %v, err: %v", db, stderr, err)
 		if atomic.LoadInt32(db.clusterStatusRetryCnt) > maxClusterStatusRetry {
@@ -305,33 +301,27 @@ func ensureElectionTimeout(db *dbProperties) {
 	}
 }
 
-func resetRaftDB(db string) {
-	// backup the db by renaming it and then stop the nb/sb ovsdb process.
-	dbFile := filepath.Base(db)
+// resetRaftDB backs up the db by renaming it and then stop the nb/sb ovsdb process.
+// returns the backup name or an error
+func resetRaftDB(db *dbProperties) (string, error) {
+	dbFile := filepath.Base(db.dbAlias)
 	backupFile := strings.TrimSuffix(dbFile, filepath.Ext(dbFile)) +
 		time.Now().UTC().Format("2006-01-02_150405") + "db_bak"
-	backupDB := filepath.Join(filepath.Dir(db), backupFile)
-	err := os.Rename(db, backupDB)
+	backupDB := filepath.Join(filepath.Dir(db.dbAlias), backupFile)
+	err := os.Rename(db.dbAlias, backupDB)
 	if err != nil {
-		klog.Warningf("Failed to back up the db to backupFile: %s", backupFile)
-	} else {
-		klog.Infof("Backed up the db to backupFile: %s", backupFile)
-		var dbName string
-		var appCtl func(args ...string) (string, string, error)
-		if strings.Contains(db, "ovnnb") {
-			dbName = "OVN_Northbound"
-			appCtl = util.RunOVNNBAppCtl
-		} else {
-			dbName = "OVN_Southbound"
-			appCtl = util.RunOVNSBAppCtl
-		}
-		_, stderr, err := appCtl("exit")
-		if err != nil {
-			klog.Warningf("Unable to restart the ovn db: %s ,"+
-				"stderr: %v, err: %v", dbName, stderr, err)
-		}
-		klog.Infof("Stopped %s db after backing up the db: %s", dbName, backupFile)
+		return "", fmt.Errorf("failed to back up the db to backupFile: %s", backupFile)
 	}
+
+	klog.Infof("Backed up the db to backupFile: %s", backupFile)
+	_, stderr, err := db.appCtl(5, "exit")
+	if err != nil {
+		return "", fmt.Errorf("unable to restart the ovn db: %s ,"+
+			"stderr: %v, err: %v", db.dbName, stderr, err)
+	}
+	klog.Infof("Stopped %s db after backing up the db: %s", db.dbName, backupFile)
+
+	return backupFile, nil
 }
 
 // EnableDBMemTrimming enables memory trimming on DB compaction for NBDB and SBDB. Every 10 minutes the DBs are compacted
@@ -360,16 +350,16 @@ func EnableDBMemTrimming() error {
 func propertiesForDB(db string) *dbProperties {
 	if strings.Contains(db, "ovnnb") {
 		return &dbProperties{
-			electionTimer:         int(config.OvnNorth.ElectionTimer) * 1000,
-			appCtl:                util.RunOVNNBAppCtl,
-			dbName:                "OVN_Northbound",
-			clusterStatusRetryCnt: &nbClusterStatusRetryCnt,
+			electionTimer: int(config.OvnNorth.ElectionTimer) * 1000,
+			appCtl:        util.RunOVNNBAppCtlWithTimeout,
+			dbName:        "OVN_Northbound",
+			dbAlias:       db,
 		}
 	}
 	return &dbProperties{
-		electionTimer:         int(config.OvnSouth.ElectionTimer) * 1000,
-		appCtl:                util.RunOVNSBAppCtl,
-		dbName:                "OVN_Southbound",
-		clusterStatusRetryCnt: &sbClusterStatusRetryCnt,
+		electionTimer: int(config.OvnSouth.ElectionTimer) * 1000,
+		appCtl:        util.RunOVNSBAppCtlWithTimeout,
+		dbName:        "OVN_Southbound",
+		dbAlias:       db,
 	}
 }
