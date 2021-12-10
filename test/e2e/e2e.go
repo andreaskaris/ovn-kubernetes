@@ -3079,7 +3079,9 @@ var _ = ginkgo.Describe("e2e IGMP validation", func() {
 		err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
 			kubectlOut, err := framework.RunKubectl(f.Namespace.Name, "exec", multicastListenerPod, "--", "/bin/bash", "-c", "ls")
 			if err != nil {
-				framework.Failf("failed to retrieve multicast IGMP query: " + err.Error())
+				// throwing errors in a go routine is not valid with ginkgo, hence return the error instead of
+				// using framework.Failf directly
+				return false, err
 			}
 			if !strings.Contains(kubectlOut, tcpdumpFileName) {
 				return false, nil
@@ -3087,6 +3089,13 @@ var _ = ginkgo.Describe("e2e IGMP validation", func() {
 			return true, nil
 		})
 		if err != nil {
+			logs, logErr := e2epod.GetPodLogs(f.ClientSet, f.Namespace.Name, multicastListenerPod, multicastListenerPod)
+			if logErr != nil {
+				framework.Logf("Warning: Failed to get logs from pod %q: %v", multicastListenerPod, logErr)
+			} else {
+				framework.Logf("pod %s/%s logs:\n%s", f.Namespace.Name, multicastListenerPod, logs)
+			}
+
 			framework.Failf("failed to retrieve multicast IGMP query: " + err.Error())
 		}
 
