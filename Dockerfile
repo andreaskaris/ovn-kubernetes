@@ -48,6 +48,10 @@ RUN INSTALL_PKGS=" \
 	yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False "ovn21.12 = $ovnver" "ovn21.12-central = $ovnver" "ovn21.12-host = $ovnver" "ovn21.12-vtep = $ovnver" && \
 	yum clean all && rm -rf /var/cache/*
 
+RUN curl -o /usr/share/openvswitch/scripts/ovs-monitor-ipsec "https://raw.githubusercontent.com/andreaskaris/ovs/ovs-monitor-ipsec-force-encapsulation/ipsec/ovs-monitor-ipsec.in"
+RUN sed -i 's#\#! @PYTHON3@#\#!/usr/libexec/platform-python#' /usr/share/openvswitch/scripts/ovs-monitor-ipsec
+RUN curl -o /usr/share/openvswitch/scripts/ovs-ctl "https://raw.githubusercontent.com/andreaskaris/ovs/ovs-monitor-ipsec-force-encapsulation/utilities/ovs-ctl.in"
+
 RUN mkdir -p /var/run/openvswitch && \
     mkdir -p /var/run/ovn && \
     mkdir -p /etc/cni/net.d && \
