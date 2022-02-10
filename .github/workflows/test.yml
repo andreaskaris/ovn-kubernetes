@@ -2,6 +2,7 @@ name: ovn-ci
 
 on:
   push:
+    branches: [ master ]
   pull_request:
     branches: [ master ]
   schedule:
@@ -37,18 +38,43 @@ jobs:
     name: Build-master
     runs-on: ubuntu-latest
     steps:
+    # Create a cache for test results
+    - name: Cache images across workflow runs
+      id: image_cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          /tmp/image_cache/
+        key: ${{ github.run_id }}-image-cache-master
+
+    - name: Check if master image build is needed
+      id: is_master_image_build_needed
+      continue-on-error: true
+      run: |
+        set -x
+        if [ -f /tmp/image_cache/image-master.tar.gz ]; then
+            mkdir -p dist/images/_output
+            cp /tmp/image_cache/image-master.tar.gz dist/images/_output/image-master.tar.gz
+            gunzip dist/images/_output/image-master.tar.gz
+            echo "::set-output name=MASTER_IMAGE_RESTORED::true"
+        fi 
+
+    # only run the following steps if the master image was not found in the cache
     - name: Set up Go
+      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       uses: actions/setup-go@v2
       with:
         go-version: ${{ env.GO_VERSION }}
       id: go
 
     - name: Check out code into the Go module directory - from master branch
+      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       uses: actions/checkout@v2
       with:
         ref: master
 
     - name: Build - from master branch
+      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
         pushd go-controller
@@ -57,6 +83,7 @@ jobs:
         popd
 
     - name: Build docker image - from master branch
+      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       run: |
         pushd dist/images
           sudo cp -f ../../go-controller/_output/go/bin/ovn* .
@@ -66,6 +93,20 @@ jobs:
           docker save ovn-daemonset-f:dev > _output/image-master.tar
         popd
 
+    - name: Cache master image
+      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
+      run: |
+        if [ -f /tmp/image_cache/image-master.tar ]; then
+            rm -f /tmp/image_cache/image-master.tar
+        fi
+        if [ -f /tmp/image_cache/image-master.tar.gz ]; then
+            rm -f /tmp/image_cache/image-master.tar.gz
+        fi
+        mkdir -p /tmp/image_cache/
+        cp dist/images/_output/image-master.tar /tmp/image_cache/image-master.tar
+        gzip /tmp/image_cache/image-master.tar
+
+    # run the following always if none of the steps before failed
     - uses: actions/upload-artifact@v2
       with:
         name: test-image-master
@@ -75,16 +116,41 @@ jobs:
     name: Build-PR
     runs-on: ubuntu-latest
     steps:
+    # Create a cache for test results
+    - name: Cache images across workflow runs
+      id: image_cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          /tmp/image_cache/
+        key: ${{ github.run_id }}-image-cache-pr
+
+    - name: Check if PR image build is needed
+      id: is_pr_image_build_needed
+      continue-on-error: true
+      run: |
+        set -x
+        if [ -f /tmp/image_cache/image-pr.tar.gz ]; then
+            mkdir -p dist/images/_output
+            cp /tmp/image_cache/image-pr.tar.gz dist/images/_output/image-pr.tar.gz
+            gunzip dist/images/_output/image-pr.tar.gz
+            echo "::set-output name=PR_IMAGE_RESTORED::true"
+        fi 
+
+    # only run the following steps if the PR image was not found in the cache
     - name: Set up Go
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       uses: actions/setup-go@v2
       with:
         go-version: ${{ env.GO_VERSION }}
       id: go
 
     - name: Check out code into the Go module directory - from current pr branch
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       uses: actions/checkout@v2
 
     - name: Build and Test - from current pr branch
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
         pushd go-controller
@@ -96,6 +162,7 @@ jobs:
         popd
 
     - name: Build docker image - from current pr branch
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         pushd dist/images
           sudo cp -f ../../go-controller/_output/go/bin/ovn* .
@@ -105,19 +172,17 @@ jobs:
           docker save ovn-daemonset-f:pr > _output/image-pr.tar
         popd
 
-    - uses: actions/upload-artifact@v2
-      with:
-        name: test-image-pr
-        path: dist/images/_output/image-pr.tar
-
     - name: Upload Junit Reports
-      if: always()
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && always()
+      continue-on-error: true
       uses: actions/upload-artifact@v2
       with:
         name: junit-unit
         path: '**/_artifacts/**.xml'
 
     - name: Submit code coverage to Coveralls
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      continue-on-error: true
       env:
         COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GO111MODULE: off
@@ -133,383 +198,632 @@ jobs:
         gover
         goveralls -coverprofile=gover.coverprofile -service=github
 
-  ovn-upgrade-e2e:
-    name: Upgrade OVN from Master to PR branch based image
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    needs:
-      - build-master
-      - build-pr
-    strategy:
-      fail-fast: false
-      matrix:
-        gateway-mode: [local, shared]
-    env:
-      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}"
-      OVN_HA: "false"
-      KIND_IPV4_SUPPORT: "true"
-      KIND_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-      OVN_MULTICAST_ENABLE:  "false"
-    steps:
-    - name: Set up Go
-      uses: actions/setup-go@v1
-      with:
-        go-version: ${{ env.GO_VERSION }}
-      id: go
-
-    - name: Set up environment
+    - name: Cache PR image
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-
-    - name: Free up disk space
-      run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
-
-    - uses: actions/download-artifact@v2
-      with:
-        name: test-image-master
-
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-
-    - name: Load docker image
-      run: |
-        docker load --input image-master.tar
-
-    - name: Check out code into the Go module directory - from PR branch
-      uses: actions/checkout@v2
-
-    - name: kind setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-f:dev"
-        make -C test install-kind
-
-    - name: Export logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-        set -x
-        docker ps -a
-        docker exec ovn-control-plane crictl images 
-        docker exec ovn-worker crictl images
-        docker exec ovn-worker2 crictl images 
-
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-    - uses: actions/download-artifact@v2
-      with:
-        name: test-image-pr
-
-    - name: Load docker image
-      run: |
-        docker load --input image-pr.tar
-
-    - name: ovn upgrade
-      run: |
-        export OVN_IMAGE="ovn-daemonset-f:pr"
-        make -C test upgrade-ovn
-
-    - name: Run E2E shard-conformance
-      run: |
-        make -C test shard-conformance
-
-    - name: Export logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs-kind-pr-branch
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
-
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
-        path: /tmp/kind/logs-kind-pr-branch
-
-  e2e:
-    name: e2e
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    # 30 mins for kind, 150 mins for control-plane tests, 10 minutes for all other steps
-    timeout-minutes: 190
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-            # hybrid-overlay = multicast-enable = emptylb-enable = false
-          - "shard-conformance"
-            # hybrid-overlay = multicast-enable = emptylb-enable = true
-          - "control-plane"
-        ha: ["HA", "noHA"]
-        disable-snat-multiple-gws: ["noSnatGW", "snatGW"]
-        gateway-mode: ["local", "shared"]
-        second-bridge: ["2br", "1br"]
-        ipfamily: ["ipv4", "ipv6", "dualstack"]
-        # Example of how to exclude a fully qualified test:
-        # - {"ipfamily": "ipv4"}, "ha": "HA", "gateway-mode": "shared", "target": "control-plane"}
-        exclude:
-         # Not currently supported but needs to be.
-         - {"ipfamily": "dualstack", "target": "control-plane"}
-         # Limit matrix combinations for CI. DISABLED items added to exclude list:
-         - {"ipfamily": "ipv4", "ha": "HA", "gateway-mode": "local"}
-         - {"ipfamily": "ipv4", "ha": "noHA", "gateway-mode": "shared"}
-         - {"ipfamily": "ipv6", "ha": "noHA", "gateway-mode": "local"}
-         - {"ipfamily": "ipv6", "ha": "noHA", "gateway-mode": "shared"}
-         - {"ipfamily": "dualstack", "ha": "HA", "gateway-mode": "shared"}
-         - {"ipfamily": "dualstack", "ha": "noHA"}
-         # IPv6 multicast is supported but tests fail due to old iperf version
-         # in agnhost images. Disable them for now.
-         - {"ipfamily": "dualstack", "target": "control-plane"}
-         - {"ipfamily": "ipv6", "target": "control-plane"}
-         # No need to run disable-snat-multiple-gws with local GW mode || shard conformance
-         - {"disable-snat-multiple-gws": "noSnatGW", "gateway-mode": "local"}
-         - {"disable-snat-multiple-gws": "noSnatGW", "target": "shard-conformance"}
-         - {"second-bridge": "2br", "gateway-mode": "local"}
-         - {"second-bridge": "2br", "disable-snat-multiple-gws": "snatGW"}
-         - {"second-bridge": "2br", "ha": "HA"}
-         - {"second-bridge": "2br", "target": "control-plane"}
-    needs: [ build-pr ]
-    env:
-      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}"
-      OVN_HYBRID_OVERLAY_ENABLE: "${{ matrix.target == 'control-plane' }}"
-      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' }}"
-      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' }}"
-      OVN_HA: "${{ matrix.ha == 'HA' }}"
-      OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-      OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
-      KIND_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
-      KIND_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
-    steps:
-
-    - name: Free up disk space
-      run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
-
-    - name: Set up Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: ${{ env.GO_VERSION }}
-      id: go
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-        if [ $OVN_SECOND_BRIDGE == "true" ]; then
-          echo OVN_TEST_EX_GW_NETWORK=kindexgw >> $GITHUB_ENV
-          echo OVN_ENABLE_EX_GW_NETWORK_BRIDGE=true >> $GITHUB_ENV
+        if [ -f /tmp/image_cache/image-pr.tar ]; then
+            rm -f /tmp/image_cache/image-pr.tar
         fi
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-    - uses: actions/download-artifact@v2
+        if [ -f /tmp/image_cache/image-pr.tar.gz ]; then
+           rm -f /tmp/image_cache/image-pr.tar.gz
+        fi
+        mkdir -p /tmp/image_cache/
+        cp dist/images/_output/image-pr.tar /tmp/image_cache/image-pr.tar
+        gzip /tmp/image_cache/image-pr.tar
+
+    # run the following if none of the previous steps failed
+    - uses: actions/upload-artifact@v2
       with:
         name: test-image-pr
+        path: dist/images/_output/image-pr.tar
 
-    - name: Load docker image
-      run: |
-        docker load --input image-pr.tar
-    - name: kind setup
-      timeout-minutes: 30
-      run: |
-        export OVN_IMAGE="ovn-daemonset-f:pr"
-        make -C test install-kind
-    - name: Run Tests
-      # e2e tests take ~60 minutes normally, 90 should be more than enough
-      # set 2 1/2 hours for control-plane tests as these might take a while
-      timeout-minutes: ${{ matrix.target == 'control-plane' && 150 || 90 }}
-      run: |
-        make -C test ${{ matrix.target }}
-    - name: Upload Junit Reports
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: './test/_artifacts/*.xml'
-
-    - name: Export logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-  e2e-dual-conversion:
-    name: e2e-dual-conversion
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        gateway-mode: [local, shared]
-    needs: [ build-pr ]
-    env:
-      JOB_NAME: "DualStack-conversion-${{ matrix.gateway-mode }}"
-      OVN_HA: "true"
-      KIND_IPV4_SUPPORT: "true"
-      KIND_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-      OVN_MULTICAST_ENABLE:  "false"
-    steps:
-
-    - name: Set up Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: ${{ env.GO_VERSION }}
-      id: go
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-    - uses: actions/download-artifact@v2
-      with:
-        name: test-image-pr
-
-    - name: Load docker image
-      run: |
-        docker load --input image-pr.tar
-    - name: kind IPv4 setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-f:pr"
-        make -C test install-kind
-    - name: Run Single-Stack Tests
-      run: |
-        make -C test shard-test WHAT="Networking Granular Checks"
-    - name: Convert IPv4 cluster to Dual Stack
-      run: |
-        ./contrib/kind-dual-stack-conversion.sh
-    - name: Run Dual-Stack Tests
-      run: |
-        KIND_IPV4_SUPPORT="true"
-        KIND_IPV6_SUPPORT="true"
-        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
-    - name: Upload Junit Reports
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: './test/_artifacts/*.xml'
-
-    - name: Export logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v2
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-  e2e-periodic:
-    name: e2e-periodic
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ["shard-conformance"]
-        ha: ["HA"]
-        gateway-mode: ["local"]
-        ipfamily: ["ipv4", "ipv6", "dualstack"]
-    needs: [ build-pr ]
-    env:
-      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}"
-      OVN_HA: "${{ matrix.ha == 'HA' }}"
-      KIND_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
-      KIND_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
-      OVN_HYBRID_OVERLAY_ENABLE: "${{ matrix.target == 'control-plane' }}"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-    steps:
-
-      - name: Free up disk space
-        run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
-
-      - name: Set up Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: ${{ env.GO_VERSION }}
-        id: go
-
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v2
-
-      - name: Set up environment
-        run: |
-          export GOPATH=$(go env GOPATH)
-          echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-          echo "$GOPATH/bin" >> $GITHUB_PATH
-      - name: Disable ufw
-        # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-        # Not needed for KIND deployments, so just disable all the time.
-        run: |
-          sudo ufw disable
-      - uses: actions/download-artifact@v2
-        with:
-          name: test-image-pr
-      - name: Load docker image
-        run: |
-          docker load --input image-pr.tar
-      - name: kind setup
-        run: |
-          export OVN_IMAGE="ovn-daemonset-f:pr"
-          make -C test install-kind
-      - name: Run Tests
-        run: |
-          make -C test ${{ matrix.target }}
-      - name: Upload Junit Reports
-        if: always()
-        uses: actions/upload-artifact@v2
-        with:
-          name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
-          path: './test/_artifacts/*.xml'
-
-      - name: Export logs
-        if: always()
-        run: |
-          mkdir -p /tmp/kind/logs
-          kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v2
-        with:
-          name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-          path: /tmp/kind/logs
+#
+#  ovn-upgrade-e2e:
+#    name: Upgrade OVN from Master to PR branch based image
+#    if: github.event_name != 'schedule'
+#    runs-on: ubuntu-latest
+#    timeout-minutes: 120
+#    needs:
+#      - build-master
+#      - build-pr
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        gateway-mode: [local, shared]
+#    env:
+#      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}"
+#      OVN_HA: "false"
+#      KIND_IPV4_SUPPORT: "true"
+#      KIND_IPV6_SUPPORT: "false"
+#      OVN_HYBRID_OVERLAY_ENABLE: "false"
+#      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
+#      OVN_MULTICAST_ENABLE:  "false"
+#    steps:
+#    # Steps will not be rerun if ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#    # contains 'completed'. See https://github.com/actions/runner/issues/432 for further details
+#    # We need the current date to retrieve data from the cache
+#    - name: Get current date
+#      id: date
+#      run: echo "::set-output name=DATE::$(date +'%Y-%m-%dT%H:%M:%S')"
+#
+#    # This will write to key ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#    # This will restore the latest key starting with ${{ env.JOB_NAME }}-${{ github.run_id }}
+#    - name: Restore last run status
+#      id: last_run
+#      uses: actions/cache@v2
+#      with:
+#        path: |
+#          run_cache
+#        key: ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#        restore-keys: |
+#          ${{ env.JOB_NAME }}-${{ github.run_id }}
+#
+#    # The last run status comes from the run_cache file in the cache
+#    # Verify all of the following steps. Only execute them if the cache does not
+#    # contain: steps.last_run_status.outputs.STATUS != 'completed' and if none
+#    # of the previous steps have failed
+#    - name: Set last run status
+#      id: last_run_status
+#      run: |
+#        if  [ -f run_cache ]; then
+#            cat run_cache
+#        fi
+#
+#    # Create a cache for test results
+#    - name: Create cache for run results
+#      id: result_cache
+#      uses: actions/cache@v2
+#      with:
+#        path: |
+#          /tmp/run_logs/
+#        key: ${{ env.JOB_NAME }}-${{ github.run_id }}-run-logs
+#        restore-keys: |
+#          ${{ env.JOB_NAME }}-${{ github.run_id }}-run-logs
+#
+#    - name: Set up Go
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/setup-go@v1
+#      with:
+#        go-version: ${{ env.GO_VERSION }}
+#      id: go
+#
+#    - name: Set up environment
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        export GOPATH=$(go env GOPATH)
+#        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+#        echo "$GOPATH/bin" >> $GITHUB_PATH
+#
+#    - name: Free up disk space
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
+#
+#    - name: Download test-image-master
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/download-artifact@v2
+#      with:
+#        name: test-image-master
+#
+#    - name: Disable ufw
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
+#      # Not needed for KIND deployments, so just disable all the time.
+#      run: |
+#        sudo ufw disable
+#
+#    - name: Load docker image
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        docker load --input image-master.tar
+#
+#    - name: Check out code into the Go module directory - from PR branch
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/checkout@v2
+#
+#    - name: kind setup
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        export OVN_IMAGE="ovn-daemonset-f:dev"
+#        make -C test install-kind
+#
+#    - name: Export kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      run: |
+#        mkdir -p /tmp/kind/logs
+#        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+#        set -x
+#        docker ps -a
+#        docker exec ovn-control-plane crictl images 
+#        docker exec ovn-worker crictl images
+#        docker exec ovn-worker2 crictl images 
+#
+#    - name: Upload kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      uses: actions/upload-artifact@v2
+#      with:
+#        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/logs
+#
+#    - name: Download test-image-pr
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/download-artifact@v2
+#      with:
+#        name: test-image-pr
+#
+#    - name: Load docker image
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        docker load --input image-pr.tar
+#
+#    - name: ovn upgrade
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        mkdir -p /tmp/run_logs
+#        exec > >(tee -a /tmp/run_logs/logs_ovn_upgrade.txt) 2>&1
+#        export OVN_IMAGE="ovn-daemonset-f:pr"
+#        make -C test upgrade-ovn
+#
+#    - name: Run E2E shard-conformance
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        mkdir -p /tmp/run_logs
+#        exec > >(tee -a /tmp/run_logs/logs_shard_conformance.txt) 2>&1
+#        make -C test shard-conformance
+#
+#    - name: Export kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      run: |
+#        mkdir -p /tmp/kind/logs-kind-pr-branch
+#        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
+#
+#    - name: Upload kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      uses: actions/upload-artifact@v2
+#      with:
+#        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
+#        path: /tmp/kind/logs-kind-pr-branch
+#
+#    # The following steps will run if the job is marked completed and no step failed
+#    - name: Display run logs from successful tests
+#      if: steps.last_run_status.outputs.STATUS == 'completed' && success()
+#      run: |
+#        if  [ -f /tmp/run_logs/logs_ovn_upgrade.txt ]; then
+#            cat /tmp/run_logs/logs_ovn_upgrade.txt
+#        fi
+#        if  [ -f /tmp/run_logs/logs_shard_conformance.txt ]; then
+#            cat /tmp/run_logs/logs_shard_conformance.txt
+#        fi
+#
+#    # This will set the name=STATUS to 'completed' if none of the above steps
+#    # failed
+#    - name: Cache success
+#      run: |
+#        echo '::set-output name=STATUS::completed' > run_cache
+#
+#  e2e:
+#    name: e2e
+#    if: github.event_name != 'schedule'
+#    runs-on: ubuntu-latest
+#    # 30 mins for kind, 150 mins for control-plane tests, 10 minutes for all other steps
+#    timeout-minutes: 190
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        target:
+#            # hybrid-overlay = multicast-enable = emptylb-enable = false
+#          - "shard-conformance"
+#            # hybrid-overlay = multicast-enable = emptylb-enable = true
+#          - "control-plane"
+#        ha: ["HA", "noHA"]
+#        disable-snat-multiple-gws: ["noSnatGW", "snatGW"]
+#        gateway-mode: ["local", "shared"]
+#        second-bridge: ["2br", "1br"]
+#        ipfamily: ["ipv4", "ipv6", "dualstack"]
+#        # Example of how to exclude a fully qualified test:
+#        # - {"ipfamily": "ipv4"}, "ha": "HA", "gateway-mode": "shared", "target": "control-plane"}
+#        exclude:
+#         # Not currently supported but needs to be.
+#         - {"ipfamily": "dualstack", "target": "control-plane"}
+#         # Limit matrix combinations for CI. DISABLED items added to exclude list:
+#         - {"ipfamily": "ipv4", "ha": "HA", "gateway-mode": "local"}
+#         - {"ipfamily": "ipv4", "ha": "noHA", "gateway-mode": "shared"}
+#         - {"ipfamily": "ipv6", "ha": "noHA", "gateway-mode": "local"}
+#         - {"ipfamily": "ipv6", "ha": "noHA", "gateway-mode": "shared"}
+#         - {"ipfamily": "dualstack", "ha": "HA", "gateway-mode": "shared"}
+#         - {"ipfamily": "dualstack", "ha": "noHA"}
+#         # IPv6 multicast is supported but tests fail due to old iperf version
+#         # in agnhost images. Disable them for now.
+#         - {"ipfamily": "dualstack", "target": "control-plane"}
+#         - {"ipfamily": "ipv6", "target": "control-plane"}
+#         # No need to run disable-snat-multiple-gws with local GW mode || shard conformance
+#         - {"disable-snat-multiple-gws": "noSnatGW", "gateway-mode": "local"}
+#         - {"disable-snat-multiple-gws": "noSnatGW", "target": "shard-conformance"}
+#         - {"second-bridge": "2br", "gateway-mode": "local"}
+#         - {"second-bridge": "2br", "disable-snat-multiple-gws": "snatGW"}
+#         - {"second-bridge": "2br", "ha": "HA"}
+#         - {"second-bridge": "2br", "target": "control-plane"}
+#    needs: [ build-pr ]
+#    env:
+#      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}"
+#      OVN_HYBRID_OVERLAY_ENABLE: "${{ matrix.target == 'control-plane' }}"
+#      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' }}"
+#      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' }}"
+#      OVN_HA: "${{ matrix.ha == 'HA' }}"
+#      OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
+#      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
+#      OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
+#      KIND_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
+#      KIND_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
+#    steps:
+#    # Steps will not be rerun if ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#    # contains 'completed'. See https://github.com/actions/runner/issues/432 for further details
+#    # We need the current date to retrieve data from the cache
+#    - name: Get current date
+#      id: date
+#      run: echo "::set-output name=DATE::$(date +'%Y-%m-%dT%H:%M:%S')"
+#
+#    # This will write to key ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#    # This will restore the latest key starting with ${{ env.JOB_NAME }}-${{ github.run_id }}
+#    - name: Restore last run status
+#      id: last_run
+#      uses: actions/cache@v2
+#      with:
+#        path: |
+#          run_cache
+#        key: ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#        restore-keys: |
+#          ${{ env.JOB_NAME }}-${{ github.run_id }}
+#
+#    # The last run status comes from the run_cache file in the cache
+#    # Verify all of the following steps. Only execute them if the cache does not
+#    # contain: steps.last_run_status.outputs.STATUS != 'completed' and if none
+#    # of the previous steps have failed
+#    - name: Set last run status
+#      id: last_run_status
+#      run: |
+#        if  [ -f run_cache ]; then
+#            cat run_cache
+#        fi
+#
+#    # Create a cache for test results
+#    - name: Create cache for run results
+#      id: result_cache
+#      uses: actions/cache@v2
+#      with:
+#        path: |
+#          /tmp/run_logs/
+#        key: ${{ env.JOB_NAME }}-${{ github.run_id }}-run-logs
+#        restore-keys: |
+#          ${{ env.JOB_NAME }}-${{ github.run_id }}-run-logs
+#
+#    - name: Free up disk space
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
+#
+#    - name: Set up Go
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/setup-go@v2
+#      with:
+#        go-version: ${{ env.GO_VERSION }}
+#      id: go
+#
+#    - name: Check out code into the Go module directory
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/checkout@v2
+#
+#    - name: Set up environment
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        export GOPATH=$(go env GOPATH)
+#        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+#        echo "$GOPATH/bin" >> $GITHUB_PATH
+#        if [ $OVN_SECOND_BRIDGE == "true" ]; then
+#          echo OVN_TEST_EX_GW_NETWORK=kindexgw >> $GITHUB_ENV
+#          echo OVN_ENABLE_EX_GW_NETWORK_BRIDGE=true >> $GITHUB_ENV
+#        fi
+#
+#    - name: Disable ufw
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
+#      # Not needed for KIND deployments, so just disable all the time.
+#      run: |
+#        sudo ufw disable
+#
+#    - name: Download test-image-pr 
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/download-artifact@v2
+#      with:
+#        name: test-image-pr
+#
+#    - name: Load docker image
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        docker load --input image-pr.tar
+#
+#    - name: kind setup
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      timeout-minutes: 30
+#      run: |
+#        export OVN_IMAGE="ovn-daemonset-f:pr"
+#        make -C test install-kind
+#
+#    - name: Run Tests
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      # e2e tests take ~60 minutes normally, 90 should be more than enough
+#      # set 2 1/2 hours for control-plane tests as these might take a while
+#      timeout-minutes: ${{ matrix.target == 'control-plane' && 150 || 90 }}
+#      run: |
+#        mkdir -p /tmp/run_logs
+#        exec > >(tee -a /tmp/run_logs/logs.txt) 2>&1
+#        make -C test ${{ matrix.target }}
+#
+#    # The following steps will always run unless the job is marked as completed
+#    - name: Upload Junit Reports
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      uses: actions/upload-artifact@v2
+#      with:
+#        name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: './test/_artifacts/*.xml'
+#
+#    - name: Export kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      run: |
+#        mkdir -p /tmp/kind/logs
+#        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+#
+#    - name: Upload kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      uses: actions/upload-artifact@v2
+#      with:
+#        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/logs
+#
+#    # The following steps will run if the job is marked completed and no step failed
+#    - name: Display run logs from successful tests
+#      if: steps.last_run_status.outputs.STATUS == 'completed' && success()
+#      run: |
+#        if  [ -f /tmp/run_logs/logs.txt ]; then
+#            cat /tmp/run_logs/logs.txt
+#        fi
+#
+#    # This will set the name=STATUS to 'completed' if none of the above steps
+#    # failed
+#    - name: Cache success
+#      run: |
+#        echo '::set-output name=STATUS::completed' > run_cache
+#
+#  e2e-dual-conversion:
+#    name: e2e-dual-conversion
+#    if: github.event_name != 'schedule'
+#    runs-on: ubuntu-latest
+#    timeout-minutes: 60
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        gateway-mode: [local, shared]
+#    needs: [ build-pr ]
+#    env:
+#      JOB_NAME: "DualStack-conversion-${{ matrix.gateway-mode }}"
+#      OVN_HA: "true"
+#      KIND_IPV4_SUPPORT: "true"
+#      KIND_IPV6_SUPPORT: "false"
+#      OVN_HYBRID_OVERLAY_ENABLE: "false"
+#      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
+#      OVN_MULTICAST_ENABLE:  "false"
+#    steps:
+#    # Steps will not be rerun if ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#    # contains 'completed'. See https://github.com/actions/runner/issues/432 for further details
+#    # We need the current date to retrieve data from the cache
+#    - name: Get current date
+#      id: date
+#      run: echo "::set-output name=DATE::$(date +'%Y-%m-%dT%H:%M:%S')"
+#
+#    # This will write to key ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#    # This will restore the latest key starting with ${{ env.JOB_NAME }}-${{ github.run_id }}
+#    - name: Restore last run status
+#      id: last_run
+#      uses: actions/cache@v2
+#      with:
+#        path: |
+#          run_cache
+#        key: ${{ env.JOB_NAME }}-${{ github.run_id }}-${{ steps.date.outputs.DATE }}
+#        restore-keys: |
+#          ${{ env.JOB_NAME }}-${{ github.run_id }}
+#
+#    # The last run status comes from the run_cache file in the cache
+#    # Verify all of the following steps. Only execute them if the cache does not
+#    # contain: steps.last_run_status.outputs.STATUS != 'completed' and if none
+#    # of the previous steps have failed
+#    - name: Set last run status
+#      id: last_run_status
+#      run: |
+#        if  [ -f run_cache ]; then
+#            cat run_cache
+#        fi
+#
+#    # Create a cache for test results
+#    - name: Create cache for run results
+#      id: result_cache
+#      uses: actions/cache@v2
+#      with:
+#        path: |
+#          /tmp/run_logs/
+#        key: ${{ env.JOB_NAME }}-${{ github.run_id }}-run-logs
+#        restore-keys: |
+#          ${{ env.JOB_NAME }}-${{ github.run_id }}-run-logs
+#
+#    - name: Set up Go
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/setup-go@v2
+#      with:
+#        go-version: ${{ env.GO_VERSION }}
+#      id: go
+#
+#    - name: Check out code into the Go module directory
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/checkout@v2
+#
+#    - name: Set up environment
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        export GOPATH=$(go env GOPATH)
+#        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+#        echo "$GOPATH/bin" >> $GITHUB_PATH
+#
+#    - name: Disable ufw
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
+#      # Not needed for KIND deployments, so just disable all the time.
+#      run: |
+#        sudo ufw disable
+#
+#    - name: Download test-image-pr 
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      uses: actions/download-artifact@v2
+#      with:
+#        name: test-image-pr
+#
+#    - name: Load docker image
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        docker load --input image-pr.tar
+#
+#    - name: kind IPv4 setup
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        export OVN_IMAGE="ovn-daemonset-f:pr"
+#        make -C test install-kind
+#
+#    - name: Run Single-Stack Tests
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        mkdir -p /tmp/run_logs
+#        exec > >(tee -a /tmp/run_logs/single_stack_logs.txt) 2>&1
+#        make -C test shard-test WHAT="Networking Granular Checks"
+#
+#    - name: Convert IPv4 cluster to Dual Stack
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        ./contrib/kind-dual-stack-conversion.sh
+#
+#    - name: Run Dual-Stack Tests
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
+#      run: |
+#        mkdir -p /tmp/run_logs
+#        exec > >(tee -a /tmp/run_logs/dual_stack_logs.txt) 2>&1
+#        KIND_IPV4_SUPPORT="true"
+#        KIND_IPV6_SUPPORT="true"
+#        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
+#
+#    - name: Upload Junit Reports
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      uses: actions/upload-artifact@v2
+#      with:
+#        name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: './test/_artifacts/*.xml'
+#
+#    - name: Export kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      run: |
+#        mkdir -p /tmp/kind/logs
+#        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+#
+#    - name: Upload kind logs
+#      if: steps.last_run_status.outputs.STATUS != 'completed' && always()
+#      uses: actions/upload-artifact@v2
+#      with:
+#        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/logs
+#
+#    # The following steps will run if the job is marked completed and no step failed
+#    - name: Display run logs from successful tests
+#      if: steps.last_run_status.outputs.STATUS == 'completed' && success()
+#      run: |
+#        if  [ -f /tmp/run_logs/single_stack_logs.txt ]; then
+#            cat /tmp/run_logs/single_stack_logs.txt
+#        fi
+#        if  [ -f /tmp/run_logs/dual_stack_logs.txt ]; then
+#            cat /tmp/run_logs/dual_stack_logs.txt
+#        fi
+#
+#    # This will set the name=STATUS to 'completed' if none of the above steps
+#    # failed
+#    - name: Cache success
+#      run: |
+#        echo '::set-output name=STATUS::completed' > run_cache
+#
+#  e2e-periodic:
+#    name: e2e-periodic
+#    if: github.event_name == 'schedule'
+#    runs-on: ubuntu-latest
+#    timeout-minutes: 60
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        target: ["shard-conformance"]
+#        ha: ["HA"]
+#        gateway-mode: ["local"]
+#        ipfamily: ["ipv4", "ipv6", "dualstack"]
+#    needs: [ build-pr ]
+#    env:
+#      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}"
+#      OVN_HA: "${{ matrix.ha == 'HA' }}"
+#      KIND_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
+#      KIND_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
+#      OVN_HYBRID_OVERLAY_ENABLE: "${{ matrix.target == 'control-plane' }}"
+#      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
+#    steps:
+#
+#      - name: Free up disk space
+#        run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
+#
+#      - name: Set up Go
+#        uses: actions/setup-go@v2
+#        with:
+#          go-version: ${{ env.GO_VERSION }}
+#        id: go
+#
+#      - name: Check out code into the Go module directory
+#        uses: actions/checkout@v2
+#
+#      - name: Set up environment
+#        run: |
+#          export GOPATH=$(go env GOPATH)
+#          echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+#          echo "$GOPATH/bin" >> $GITHUB_PATH
+#      - name: Disable ufw
+#        # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
+#        # Not needed for KIND deployments, so just disable all the time.
+#        run: |
+#          sudo ufw disable
+#      - uses: actions/download-artifact@v2
+#        with:
+#          name: test-image-pr
+#      - name: Load docker image
+#        run: |
+#          docker load --input image-pr.tar
+#      - name: kind setup
+#        run: |
+#          export OVN_IMAGE="ovn-daemonset-f:pr"
+#          make -C test install-kind
+#      - name: Run Tests
+#        run: |
+#          make -C test ${{ matrix.target }}
+#      - name: Upload Junit Reports
+#        if: always()
+#        uses: actions/upload-artifact@v2
+#        with:
+#          name: kind-junit-${{ env.JOB_NAME }}-${{ github.run_id }}
+#          path: './test/_artifacts/*.xml'
+#
+#      - name: Export logs
+#        if: always()
+#        run: |
+#          mkdir -p /tmp/kind/logs
+#          kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+#      - name: Upload logs
+#        if: always()
+#        uses: actions/upload-artifact@v2
+#        with:
+#          name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+#          path: /tmp/kind/logs
