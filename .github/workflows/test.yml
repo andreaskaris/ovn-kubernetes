@@ -20,19 +20,19 @@ env:
 
 jobs:
   # separate job for parallelism
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v2
-
-    - name: Verify
-      uses: golangci/golangci-lint-action@v2
-      with:
-        version: v1.33.2
-        working-directory: go-controller
-        args: --modules-download-mode=vendor --timeout=15m0s --verbose
+  #  lint:
+  #    name: Lint
+  #    runs-on: ubuntu-latest
+  #    steps:
+  #    - name: Check out code
+  #      uses: actions/checkout@v2
+  #
+  #    - name: Verify
+  #      uses: golangci/golangci-lint-action@v2
+  #      with:
+  #        version: v1.33.2
+  #        working-directory: go-controller
+  #        args: --modules-download-mode=vendor --timeout=15m0s --verbose
 
   build-master:
     name: Build-master
@@ -77,21 +77,31 @@ jobs:
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
-        pushd go-controller
-           make
-           make windows
-        popd
+        # pushd go-controller
+        #  make
+        #   make windows
+        # popd
+        echo "Success"
 
     - name: Build docker image - from master branch
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       run: |
-        pushd dist/images
-          sudo cp -f ../../go-controller/_output/go/bin/ovn* .
-          echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-          docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora .
-          mkdir _output
-          docker save ovn-daemonset-f:dev > _output/image-master.tar
-        popd
+        # pushd dist/images
+        #  sudo cp -f ../../go-controller/_output/go/bin/ovn* .
+        #  echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
+        #  docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora .
+        #  mkdir _output
+        #  docker save ovn-daemonset-f:dev > _output/image-master.tar
+        # popd
+        r=$((1 + $RANDOM % 10))
+        if [ $r -le 2 ]; then
+            echo "Fail"
+            exit 1
+        fi
+        mkdir -p dist/images/_output
+        touch dist/images/_output/image-master
+        tar -cf dist/images/_output/image-master.tar dist/images/_output/image-master
+        echo "Success"
 
     - name: Cache master image
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
@@ -153,24 +163,34 @@ jobs:
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
-        pushd go-controller
-           # exit early if there are gofmt issues
-           make gofmt
-           make
-           make windows
-           COVERALLS=1 CONTAINER_RUNNABLE=1 make check
-        popd
+        # pushd go-controller
+        #    # exit early if there are gofmt issues
+        #    make gofmt
+        #    make
+        #    make windows
+        #    COVERALLS=1 CONTAINER_RUNNABLE=1 make check
+        # popd
+        echo "Success"
 
     - name: Build docker image - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
-        pushd dist/images
-          sudo cp -f ../../go-controller/_output/go/bin/ovn* .
-          echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-          docker build -t ovn-daemonset-f:pr -f Dockerfile.fedora .
-          mkdir _output
-          docker save ovn-daemonset-f:pr > _output/image-pr.tar
-        popd
+        # pushd dist/images
+        #   sudo cp -f ../../go-controller/_output/go/bin/ovn* .
+        #   echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
+        #   docker build -t ovn-daemonset-f:pr -f Dockerfile.fedora .
+        #   mkdir _output
+        #   docker save ovn-daemonset-f:pr > _output/image-pr.tar
+        # popd
+        r=$((1 + $RANDOM % 10))
+        if [ $r -le 2 ]; then
+            echo "Fail"
+            exit 1
+        fi
+        mkdir -p dist/images/_output
+        touch dist/images/_output/image-pr
+        tar -cf dist/images/_output/image-pr.tar dist/images/_output/image-pr
+        echo "Success"
 
     - name: Upload Junit Reports
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && always()
@@ -303,7 +323,8 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        docker load --input image-master.tar
+        # docker load --input image-master.tar
+        echo "Success"
 
     - name: Check out code into the Go module directory - from PR branch
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -315,7 +336,7 @@ jobs:
         export OVN_IMAGE="ovn-daemonset-f:dev"
         #        make -C test install-kind
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -325,12 +346,13 @@ jobs:
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-        set -x
-        docker ps -a
-        docker exec ovn-control-plane crictl images 
-        docker exec ovn-worker crictl images
-        docker exec ovn-worker2 crictl images 
+        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+        # set -x
+        # docker ps -a
+        # docker exec ovn-control-plane crictl images 
+        # docker exec ovn-worker crictl images
+        # docker exec ovn-worker2 crictl images 
+        echo "Success"
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -348,7 +370,8 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        docker load --input image-pr.tar
+        # docker load --input image-pr.tar
+        echo "Success"
 
     - name: ovn upgrade
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -358,7 +381,7 @@ jobs:
         export OVN_IMAGE="ovn-daemonset-f:pr"
         # make -C test upgrade-ovn
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -371,13 +394,13 @@ jobs:
         exec > >(tee -a /tmp/run_logs/logs_shard_conformance.txt) 2>&1
         # make -C test shard-conformance
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
         echo "Success"
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -387,7 +410,8 @@ jobs:
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs-kind-pr-branch
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
+        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
+        echo "Success"
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -543,7 +567,8 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        docker load --input image-pr.tar
+        # docker load --input image-pr.tar
+        echo "Success"
 
     - name: kind setup
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -552,7 +577,7 @@ jobs:
         export OVN_IMAGE="ovn-daemonset-f:pr"
         # make -C test install-kind
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -568,7 +593,7 @@ jobs:
         exec > >(tee -a /tmp/run_logs/logs.txt) 2>&1
         # make -C test ${{ matrix.target }}
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -586,7 +611,8 @@ jobs:
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+        echo "Success"
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -695,7 +721,8 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        docker load --input image-pr.tar
+        # docker load --input image-pr.tar
+        echo "Success"
 
     - name: kind IPv4 setup
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -703,7 +730,7 @@ jobs:
         export OVN_IMAGE="ovn-daemonset-f:pr"
         # make -C test install-kind
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -716,7 +743,7 @@ jobs:
         exec > >(tee -a /tmp/run_logs/single_stack_logs.txt) 2>&1
         # make -C test shard-test WHAT="Networking Granular Checks"
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -725,7 +752,8 @@ jobs:
     - name: Convert IPv4 cluster to Dual Stack
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        ./contrib/kind-dual-stack-conversion.sh
+        # ./contrib/kind-dual-stack-conversion.sh
+        echo "Success"
 
     - name: Run Dual-Stack Tests
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -736,7 +764,7 @@ jobs:
         KIND_IPV6_SUPPORT="true"
         # make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then
+        if [ $r -le 2 ]; then
             echo "Fail"
             exit 1
         fi
@@ -753,7 +781,8 @@ jobs:
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+        echo "Success"
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
