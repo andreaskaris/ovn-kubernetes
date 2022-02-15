@@ -20,19 +20,19 @@ env:
 
 jobs:
   # separate job for parallelism
-  #  lint:
-  #    name: Lint
-  #    runs-on: ubuntu-latest
-  #    steps:
-  #    - name: Check out code
-  #      uses: actions/checkout@v2
-  #
-  #    - name: Verify
-  #      uses: golangci/golangci-lint-action@v2
-  #      with:
-  #        version: v1.33.2
-  #        working-directory: go-controller
-  #        args: --modules-download-mode=vendor --timeout=15m0s --verbose
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+
+    - name: Verify
+      uses: golangci/golangci-lint-action@v2
+      with:
+        version: v1.33.2
+        working-directory: go-controller
+        args: --modules-download-mode=vendor --timeout=15m0s --verbose
 
   build-master:
     name: Build-master
@@ -57,7 +57,7 @@ jobs:
             cp /tmp/image_cache/image-master.tar.gz dist/images/_output/image-master.tar.gz
             gunzip dist/images/_output/image-master.tar.gz
             echo "::set-output name=MASTER_IMAGE_RESTORED::true"
-        fi 
+        fi
 
     # only run the following steps if the master image was not found in the cache
     - name: Set up Go
@@ -77,31 +77,21 @@ jobs:
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
-        # pushd go-controller
-        #  make
-        #   make windows
-        # popd
-        echo "Success"
+        pushd go-controller
+           make
+           make windows
+        popd
 
     - name: Build docker image - from master branch
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       run: |
-        # pushd dist/images
-        #  sudo cp -f ../../go-controller/_output/go/bin/ovn* .
-        #  echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-        #  docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora .
-        #  mkdir _output
-        #  docker save ovn-daemonset-f:dev > _output/image-master.tar
-        # popd
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        mkdir -p dist/images/_output
-        touch dist/images/_output/image-master
-        tar -cf dist/images/_output/image-master.tar dist/images/_output/image-master
-        echo "Success"
+        pushd dist/images
+          sudo cp -f ../../go-controller/_output/go/bin/ovn* .
+          echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
+          docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora .
+          mkdir _output
+          docker save ovn-daemonset-f:dev > _output/image-master.tar
+        popd
 
     - name: Cache master image
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
@@ -145,7 +135,7 @@ jobs:
             cp /tmp/image_cache/image-pr.tar.gz dist/images/_output/image-pr.tar.gz
             gunzip dist/images/_output/image-pr.tar.gz
             echo "::set-output name=PR_IMAGE_RESTORED::true"
-        fi 
+        fi
 
     # only run the following steps if the PR image was not found in the cache
     - name: Set up Go
@@ -163,34 +153,24 @@ jobs:
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
-        # pushd go-controller
-        #    # exit early if there are gofmt issues
-        #    make gofmt
-        #    make
-        #    make windows
-        #    COVERALLS=1 CONTAINER_RUNNABLE=1 make check
-        # popd
-        echo "Success"
+        pushd go-controller
+           # exit early if there are gofmt issues
+           make gofmt
+           make
+           make windows
+           COVERALLS=1 CONTAINER_RUNNABLE=1 make check
+        popd
 
     - name: Build docker image - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
-        # pushd dist/images
-        #   sudo cp -f ../../go-controller/_output/go/bin/ovn* .
-        #   echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-        #   docker build -t ovn-daemonset-f:pr -f Dockerfile.fedora .
-        #   mkdir _output
-        #   docker save ovn-daemonset-f:pr > _output/image-pr.tar
-        # popd
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        mkdir -p dist/images/_output
-        touch dist/images/_output/image-pr
-        tar -cf dist/images/_output/image-pr.tar dist/images/_output/image-pr
-        echo "Success"
+        pushd dist/images
+          sudo cp -f ../../go-controller/_output/go/bin/ovn* .
+          echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
+          docker build -t ovn-daemonset-f:pr -f Dockerfile.fedora .
+          mkdir _output
+          docker save ovn-daemonset-f:pr > _output/image-pr.tar
+        popd
 
     - name: Upload Junit Reports
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && always()
@@ -264,7 +244,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          run_cache
+          /tmp/run_cache
         key: ${{ env.JOB_NAME }}-${{ github.run_id }}
 
     # The last run status comes from the run_cache file in the cache
@@ -274,8 +254,8 @@ jobs:
     - name: Set last run status
       id: last_run_status
       run: |
-        if  [ -f run_cache ]; then
-            cat run_cache
+        if  [ -f /tmp/run_cache ]; then
+            cat /tmp/run_cache
         fi
 
     # Create a cache for test results
@@ -323,8 +303,7 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        # docker load --input image-master.tar
-        echo "Success"
+        docker load --input image-master.tar
 
     - name: Check out code into the Go module directory - from PR branch
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -334,25 +313,18 @@ jobs:
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
         export OVN_IMAGE="ovn-daemonset-f:dev"
-        #        make -C test install-kind
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test install-kind
 
     - name: Export kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs
-        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-        # set -x
-        # docker ps -a
-        # docker exec ovn-control-plane crictl images 
-        # docker exec ovn-worker crictl images
-        # docker exec ovn-worker2 crictl images 
-        echo "Success"
+        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
+        set -x
+        docker ps -a
+        docker exec ovn-control-plane crictl images 
+        docker exec ovn-worker crictl images
+        docker exec ovn-worker2 crictl images 
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -370,8 +342,7 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        # docker load --input image-pr.tar
-        echo "Success"
+        docker load --input image-pr.tar
 
     - name: ovn upgrade
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -379,39 +350,20 @@ jobs:
         mkdir -p /tmp/run_logs
         exec > >(tee -a /tmp/run_logs/logs_ovn_upgrade.txt) 2>&1
         export OVN_IMAGE="ovn-daemonset-f:pr"
-        # make -C test upgrade-ovn
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test upgrade-ovn
 
     - name: Run E2E shard-conformance
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
         mkdir -p /tmp/run_logs
         exec > >(tee -a /tmp/run_logs/logs_shard_conformance.txt) 2>&1
-        # make -C test shard-conformance
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test shard-conformance
 
     - name: Export kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs-kind-pr-branch
-        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
-        echo "Success"
+        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -435,7 +387,7 @@ jobs:
     # failed
     - name: Cache success
       run: |
-        echo '::set-output name=STATUS::completed' > run_cache
+        echo '::set-output name=STATUS::completed' > /tmp/run_cache
 
   e2e:
     name: e2e
@@ -498,7 +450,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          run_cache
+          /tmp/run_cache
         key: ${{ env.JOB_NAME }}-${{ github.run_id }}
         restore-keys: |
           ${{ env.JOB_NAME }}-${{ github.run_id }}
@@ -510,8 +462,8 @@ jobs:
     - name: Set last run status
       id: last_run_status
       run: |
-        if  [ -f run_cache ]; then
-            cat run_cache
+        if  [ -f /tmp/run_cache ]; then
+            cat /tmp/run_cache
         fi
 
     # Create a cache for test results
@@ -558,7 +510,7 @@ jobs:
       run: |
         sudo ufw disable
 
-    - name: Download test-image-pr 
+    - name: Download test-image-pr
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       uses: actions/download-artifact@v2
       with:
@@ -567,21 +519,14 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        # docker load --input image-pr.tar
-        echo "Success"
+        docker load --input image-pr.tar
 
     - name: kind setup
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       timeout-minutes: 30
       run: |
         export OVN_IMAGE="ovn-daemonset-f:pr"
-        # make -C test install-kind
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test install-kind
 
     - name: Run Tests
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -591,13 +536,7 @@ jobs:
       run: |
         mkdir -p /tmp/run_logs
         exec > >(tee -a /tmp/run_logs/logs.txt) 2>&1
-        # make -C test ${{ matrix.target }}
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test ${{ matrix.target }}
 
     # The following steps will always run unless the job is marked as completed
     - name: Upload Junit Reports
@@ -611,8 +550,7 @@ jobs:
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs
-        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-        echo "Success"
+        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -633,7 +571,7 @@ jobs:
     # failed
     - name: Cache success
       run: |
-        echo '::set-output name=STATUS::completed' > run_cache
+        echo '::set-output name=STATUS::completed' > /tmp/run_cache
 
   e2e-dual-conversion:
     name: e2e-dual-conversion
@@ -660,7 +598,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          run_cache
+          /tmp/run_cache
         key: ${{ env.JOB_NAME }}-${{ github.run_id }}
         restore-keys: |
           ${{ env.JOB_NAME }}-${{ github.run_id }}
@@ -672,8 +610,8 @@ jobs:
     - name: Set last run status
       id: last_run_status
       run: |
-        if  [ -f run_cache ]; then
-            cat run_cache
+        if  [ -f /tmp/run_cache ]; then
+            cat /tmp/run_cache
         fi
 
     # Create a cache for test results
@@ -712,7 +650,7 @@ jobs:
       run: |
         sudo ufw disable
 
-    - name: Download test-image-pr 
+    - name: Download test-image-pr
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       uses: actions/download-artifact@v2
       with:
@@ -721,39 +659,25 @@ jobs:
     - name: Load docker image
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        # docker load --input image-pr.tar
-        echo "Success"
+        docker load --input image-pr.tar
 
     - name: kind IPv4 setup
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
         export OVN_IMAGE="ovn-daemonset-f:pr"
-        # make -C test install-kind
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test install-kind
 
     - name: Run Single-Stack Tests
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
         mkdir -p /tmp/run_logs
         exec > >(tee -a /tmp/run_logs/single_stack_logs.txt) 2>&1
-        # make -C test shard-test WHAT="Networking Granular Checks"
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test shard-test WHAT="Networking Granular Checks"
 
     - name: Convert IPv4 cluster to Dual Stack
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
       run: |
-        # ./contrib/kind-dual-stack-conversion.sh
-        echo "Success"
+        ./contrib/kind-dual-stack-conversion.sh
 
     - name: Run Dual-Stack Tests
       if: steps.last_run_status.outputs.STATUS != 'completed' && success()
@@ -762,13 +686,7 @@ jobs:
         exec > >(tee -a /tmp/run_logs/dual_stack_logs.txt) 2>&1
         KIND_IPV4_SUPPORT="true"
         KIND_IPV6_SUPPORT="true"
-        # make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 2 ]; then
-            echo "Fail"
-            exit 1
-        fi
-        echo "Success"
+        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
 
     - name: Upload Junit Reports
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -781,8 +699,7 @@ jobs:
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
       run: |
         mkdir -p /tmp/kind/logs
-        # kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-        echo "Success"
+        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
 
     - name: Upload kind logs
       if: steps.last_run_status.outputs.STATUS != 'completed' && always()
@@ -806,7 +723,7 @@ jobs:
     # failed
     - name: Cache success
       run: |
-        echo '::set-output name=STATUS::completed' > run_cache
+        echo '::set-output name=STATUS::completed' > /tmp/run_cache
 
   e2e-periodic:
     name: e2e-periodic
