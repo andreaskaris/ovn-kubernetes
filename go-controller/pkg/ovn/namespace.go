@@ -351,14 +351,26 @@ func (oc *Controller) updateNamespace(old, newer *kapi.Namespace) {
 	aclAnnotation := newer.Annotations[aclLoggingAnnotation]
 	oldACLAnnotation := old.Annotations[aclLoggingAnnotation]
 	// support for ACL logging update, if new annotation is empty, make sure we propagate new setting
-	if aclAnnotation != oldACLAnnotation && (oc.aclLoggingCanEnable(aclAnnotation, nsInfo) || aclAnnotation == "") &&
-		len(nsInfo.networkPolicies) > 0 {
-		// deny rules are all one per namespace
-		if err := oc.setACLLoggingForNamespace(old.Name, nsInfo); err != nil {
-			klog.Warningf(err.Error())
-		} else {
-			klog.Infof("Namespace %s: ACL logging setting updated to deny=%s allow=%s",
-				old.Name, nsInfo.aclLogging.Deny, nsInfo.aclLogging.Allow)
+	if aclAnnotation != oldACLAnnotation && (oc.aclLoggingCanEnable(aclAnnotation, nsInfo) || aclAnnotation == "") {
+		if len(nsInfo.networkPolicies) > 0 {
+			// deny rules are all one per namespace
+			if err := oc.setACLLoggingForNamespace(old.Name, nsInfo); err != nil {
+				klog.Warningf(err.Error())
+			} else {
+				klog.Infof("Namespace %s: NetworkPolicy ACL logging setting updated to deny=%s allow=%s",
+					old.Name, nsInfo.aclLogging.Deny, nsInfo.aclLogging.Allow)
+			}
+		}
+		// get the k8s EgressFirewall Object if it exists
+		if egressFirewall, err := oc.kube.GetEgressFirewall(old.Name); err == nil && egressFirewall != nil {
+			// trigger an egress fw update
+			errList := oc.refreshEgressFirewallLogging(egressFirewall)
+			if errList != nil {
+				klog.Warningf(errList.Error())
+			} else {
+				klog.Infof("Namespace %s: EgressFirewall ACL logging setting updated to deny=%s allow=%s",
+					old.Name, nsInfo.aclLogging.Deny, nsInfo.aclLogging.Allow)
+			}
 		}
 	}
 	oc.multicastUpdateNamespace(newer, nsInfo)

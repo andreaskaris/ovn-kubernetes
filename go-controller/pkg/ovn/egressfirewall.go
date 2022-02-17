@@ -266,6 +266,14 @@ func (oc *Controller) updateEgressFirewall(oldEgressFirewall, newEgressFirewall 
 	return updateErrors
 }
 
+// refreshEgressFirewallLogging rewrites all rules to OVN for this specific firewall.
+// This method can be called for example from the Namespaces Watcher methods to reload firewall rules when namespace
+// annotations change.
+// TODO: do not delete / add rules. Instead, use libovsdb to mutate existing rules!!!!!
+func (oc *Controller) refreshEgressFirewallLogging(egressFirewall *egressfirewallapi.EgressFirewall) error {
+	return oc.updateEgressFirewall(egressFirewall, egressFirewall)
+}
+
 func (oc *Controller) deleteEgressFirewall(egressFirewallObj *egressfirewallapi.EgressFirewall) error {
 	klog.Infof("Deleting egress Firewall %s in namespace %s", egressFirewallObj.Name, egressFirewallObj.Namespace)
 	deleteDNS := false
@@ -309,13 +317,18 @@ func (oc *Controller) updateEgressFirewallWithRetry(egressfirewall *egressfirewa
 }
 
 func (oc *Controller) addEgressFirewallRules(ef *egressFirewall, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string, efStartPriority int) error {
+	nsInfo := oc.namespaces[ef.namespace]
+
 	for _, rule := range ef.egressRules {
 		var action string
+		var aclLogging string
 		var matchTargets []matchTarget
 		if rule.access == egressfirewallapi.EgressFirewallRuleAllow {
 			action = "allow"
+			aclLogging = nsInfo.aclLogging.Allow
 		} else {
 			action = "drop"
+			aclLogging = nsInfo.aclLogging.Deny
 		}
 		if rule.to.cidrSelector != "" {
 			if utilnet.IsIPv6CIDRString(rule.to.cidrSelector) {
@@ -338,7 +351,10 @@ func (oc *Controller) addEgressFirewallRules(ef *egressFirewall, hashedAddressSe
 			}
 		}
 		match := generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, matchTargets, rule.ports)
-		err := oc.createEgressFirewallRules(efStartPriority-rule.id, match, action, ef.namespace)
+		log := aclLogging != ""
+		severity := getACLLoggingSeverity(aclLogging)
+		meter := types.OvnACLLoggingMeter
+		err := oc.createEgressFirewallRules(efStartPriority-rule.id, match, action, ef.namespace, meter, severity, log)
 		if err != nil {
 			return err
 		}
@@ -348,7 +364,7 @@ func (oc *Controller) addEgressFirewallRules(ef *egressFirewall, hashedAddressSe
 
 // createEgressFirewallRules uses the previously generated elements and creates the
 // logical_router_policy/join_switch_acl for a specific egressFirewallRouter
-func (oc *Controller) createEgressFirewallRules(priority int, match, action, externalID string) error {
+func (oc *Controller) createEgressFirewallRules(priority int, match, action, externalID, meter string, severity nbdb.ACLSeverity, log bool) error {
 	logicalSwitches := []string{}
 	if config.Gateway.Mode == config.GatewayModeLocal {
 		nodeLocalSwitches, err := libovsdbops.FindAllNodeLocalSwitches(oc.nbClient)
@@ -362,12 +378,20 @@ func (oc *Controller) createEgressFirewallRules(priority int, match, action, ext
 		logicalSwitches = append(logicalSwitches, types.OVNJoinSwitch)
 	}
 
+	// a name is needed for logging purposes - the name must be unique, so make it
+	// egressFirewall_<namespace name>_<priority>
+	aclName := fmt.Sprintf("egressFirewall_%s_%d", externalID, priority)
+
 	egressFirewallACL := &nbdb.ACL{
 		Priority:    priority,
 		Direction:   types.DirectionToLPort,
 		Match:       match,
 		Action:      action,
 		ExternalIDs: map[string]string{"egressFirewall": externalID},
+		Name:        &aclName,
+		Meter:       &meter,
+		Severity:    &severity,
+		Log:         log,
 	}
 
 	// add it's UUID to the necessary logical switches
@@ -389,11 +413,6 @@ func (oc *Controller) createEgressFirewallRules(priority int, match, action, ext
 				BulkOp:      true,
 			},
 		}...)
-	}
-
-	aclName := ""
-	if egressFirewallACL.Name != nil {
-		aclName = *egressFirewallACL.Name
 	}
 
 	opModels = append([]libovsdbops.OperationModel{

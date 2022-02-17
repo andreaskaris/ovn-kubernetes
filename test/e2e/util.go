@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 
@@ -635,17 +636,31 @@ func pokePod(fr *framework.Framework, srcPodName string, dstPodIP string) error 
 	return fmt.Errorf("http request failed; stdout: %s, err: %v", stdout+stderr, err)
 }
 
-func assertDenyLogs(targetNodeName string, namespace string, policyName string, expectedAclSeverity string) (bool, error) {
+func pokeExternalHostFromPod(fr *framework.Framework, srcPodName, dstIp string, dstPort int) error {
+	stdout, stderr, err := fr.ExecShellInPodWithFullOutput(
+		srcPodName,
+		fmt.Sprintf("curl --output /dev/stdout -m 1 -I %s:%d | head -n1", dstIp, dstPort))
+	if err == nil && stdout == "HTTP/1.1 200 OK" {
+		return nil
+	}
+	return fmt.Errorf("http request failed; stdout: %s, err: %v", stdout+stderr, err)
+}
+
+func assertAclLogs(targetNodeName string, policyNameRegex string, expectedAclVerdict string, expectedAclSeverity string) (bool, error) {
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
 	targetNodeLog, err := runCommand([]string{"docker", "exec", targetNodeName, "grep", "acl_log", ovnControllerLogPath}...)
 	if err != nil {
 		return false, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
 
-	composedPolicyName := fmt.Sprintf("%s_%s", namespace, policyName)
-	framework.Logf("Ensuring the *deny* audit log contains: '%s\", verdict=drop' AND 'severity=%s'", composedPolicyName, expectedAclSeverity)
+	framework.Logf("Ensuring the audit log contains: 'name=\"%s\"', 'verdict=%s' AND 'severity=%s'", policyNameRegex, expectedAclVerdict, expectedAclSeverity)
 	for _, logLine := range strings.Split(targetNodeLog, "\n") {
-		if strings.Contains(logLine, fmt.Sprintf("%s\", verdict=drop", composedPolicyName)) &&
+		matched, err := regexp.MatchString(fmt.Sprintf("name=\"%s\"", policyNameRegex), logLine)
+		if err != nil {
+			return false, err
+		}
+		if matched &&
+			strings.Contains(logLine, fmt.Sprintf("verdict=%s", expectedAclVerdict)) &&
 			strings.Contains(logLine, fmt.Sprintf("severity=%s", expectedAclSeverity)) {
 			return true, nil
 		}
@@ -694,4 +709,36 @@ func isDualStackCluster(nodes *v1.NodeList) bool {
 		}
 	}
 	return false
+}
+
+// countAclLogs connects to <targetNodeName> (ovn-control-plane, ovn-worker or ovn-worker2 in kind environments) via the docker exec
+// command and it greps for the string "acl_log" inside the OVN controller logs. It then checks if the line contains name=<policyNameRegex>
+// and if it does, it increases the counter if both the verdict and the severity for this line match what's expected.
+func countAclLogs(targetNodeName string, policyNameRegex string, expectedAclVerdict string, expectedAclSeverity string) (int, error) {
+	count := 0
+
+	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
+	targetNodeLog, err := runCommand([]string{"docker", "exec", targetNodeName, "cat", ovnControllerLogPath}...)
+	if err != nil {
+		return 0, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
+	}
+
+	stringToMatch := fmt.Sprintf(
+		".*acl_log.*name=\"%s\".*verdict=%s.*severity=%s.*",
+		policyNameRegex,
+		expectedAclVerdict,
+		expectedAclSeverity)
+
+	for _, logLine := range strings.Split(targetNodeLog, "\n") {
+		matched, err := regexp.MatchString(stringToMatch, logLine)
+		if err != nil {
+			return 0, err
+		}
+		if matched {
+			count++
+		}
+	}
+
+	framework.Logf("The audit log contains %d occurrences of: '%s'", count, stringToMatch)
+	return count, nil
 }

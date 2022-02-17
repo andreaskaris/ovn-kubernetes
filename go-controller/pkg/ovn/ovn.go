@@ -388,7 +388,6 @@ func (oc *Controller) Run(ctx context.Context, wg *sync.WaitGroup) error {
 		}
 		oc.egressFirewallDNS.Run(egressFirewallDNSDefaultDuration)
 		oc.egressFirewallHandler = oc.WatchEgressFirewall()
-
 	}
 
 	klog.Infof("Completing all the Watchers took %v", time.Since(start))
@@ -1203,17 +1202,26 @@ func (oc *Controller) aclLoggingCanEnable(annotation string, nsInfo *namespaceIn
 	if err != nil {
 		return false
 	}
+
+	// Using newDenyLoggingLevel and newAllowLoggingLevel allows resetting nsinfo state.
+	// This is important if a user sets either the allow level or the deny level flag to an
+	// invalid value or after they remove either the allow or the deny annotation.
+	// If either of the 2 (allow or deny logging level) is set with a valid level, return true.
+	newDenyLoggingLevel := ""
+	newAllowLoggingLevel := ""
 	okCnt := 0
 	for _, s := range []string{"alert", "warning", "notice", "info", "debug"} {
 		if aclLevels.Deny != "" && s == aclLevels.Deny {
-			nsInfo.aclLogging.Deny = aclLevels.Deny
+			newDenyLoggingLevel = aclLevels.Deny
 			okCnt++
 		}
 		if aclLevels.Allow != "" && s == aclLevels.Allow {
-			nsInfo.aclLogging.Allow = aclLevels.Allow
+			newAllowLoggingLevel = aclLevels.Allow
 			okCnt++
 		}
 	}
+	nsInfo.aclLogging.Deny = newDenyLoggingLevel
+	nsInfo.aclLogging.Allow = newAllowLoggingLevel
 	return okCnt > 0
 }
 

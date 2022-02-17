@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	ocpcloudnetworkclientset "github.com/openshift/client-go/cloudnetwork/clientset/versioned"
@@ -37,6 +38,7 @@ type Interface interface {
 	GetNodes() (*kapi.NodeList, error)
 	GetEgressIP(name string) (*egressipv1.EgressIP, error)
 	GetEgressIPs() (*egressipv1.EgressIPList, error)
+	GetEgressFirewall(namespace string) (*egressfirewall.EgressFirewall, error)
 	GetEgressFirewalls() (*egressfirewall.EgressFirewallList, error)
 	GetNamespaces(labelSelector metav1.LabelSelector) (*kapi.NamespaceList, error)
 	GetPods(namespace string, labelSelector metav1.LabelSelector) (*kapi.PodList, error)
@@ -302,6 +304,21 @@ func (k *Kube) GetEgressIPs() (*egressipv1.EgressIPList, error) {
 // GetEgressFirewalls returns the list of all EgressFirewall objects from kubernetes
 func (k *Kube) GetEgressFirewalls() (*egressfirewall.EgressFirewallList, error) {
 	return k.EgressFirewallClient.K8sV1().EgressFirewalls(metav1.NamespaceAll).List(context.TODO(), metav1.ListOptions{})
+}
+
+// GetEgressFirewall returns the single EgressFirewall object from a given namespace
+func (k *Kube) GetEgressFirewall(namespace string) (*egressfirewall.EgressFirewall, error) {
+	egressFwList, err := k.EgressFirewallClient.K8sV1().EgressFirewalls(namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if len(egressFwList.Items) > 1 {
+		return nil, fmt.Errorf("Detected more than one EgressFirewall object inside namespace %s", namespace)
+	}
+	if len(egressFwList.Items) == 0 {
+		return nil, nil
+	}
+	return &egressFwList.Items[0], nil
 }
 
 // GetEndpoint returns the Endpoints resource
