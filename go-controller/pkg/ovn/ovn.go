@@ -943,6 +943,24 @@ func (oc *Controller) WatchEgressNodes() {
 		UpdateFunc: func(old, new interface{}) {
 			oldNode := old.(*kapi.Node)
 			newNode := new.(*kapi.Node)
+
+			// Check if the node's internal addresses changed
+			// If so, delete and readd the node for egress to update
+			// LR policies.
+			// We are only interested in the IPs here, not the subnet
+			// information.
+			oldV4Addr, oldV6Addr := getNodeInternalAddrs(oldNode)
+			newV4Addr, newV6Addr := getNodeInternalAddrs(newNode)
+			if !oldV4Addr.Equal(newV4Addr) || !oldV6Addr.Equal(newV6Addr) {
+				klog.Infof("Egress IP detected IP address change. Recreating node %s for Egress IP.", newNode.Name)
+				if err := oc.deleteNodeForEgress(oldNode); err != nil {
+					klog.Error(err)
+				}
+				if err := oc.addNodeForEgress(newNode); err != nil {
+					klog.Error(err)
+				}
+			}
+
 			// Initialize the allocator on every update,
 			// ovnkube-node/cloud-network-config-controller will make sure to
 			// annotate the node with the egressIPConfig, but that might have
@@ -974,7 +992,9 @@ func (oc *Controller) WatchEgressNodes() {
 			isNewReachable := oc.isEgressNodeReachable(newNode)
 			oc.setNodeEgressReady(newNode.Name, isNewReady)
 			oc.setNodeEgressReachable(newNode.Name, isNewReachable)
-			if !oldHadEgressLabel && newHasEgressLabel {
+			// Verify the old cached assignable state vs the new label in case the label was actually set
+			// but the cache assignable state was not updated
+			if !oc.isNodeEgressAssignable(oldNode.Name) && newHasEgressLabel {
 				klog.Infof("Node: %s has been labelled, adding it for egress assignment", newNode.Name)
 				oc.setNodeEgressAssignable(newNode.Name, true)
 				if isNewReady && isNewReachable {

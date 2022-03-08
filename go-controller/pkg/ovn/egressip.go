@@ -1442,6 +1442,14 @@ func (oc *Controller) getSortedEgressData() ([]*egressNode, map[string]bool) {
 	return assignableNodes, allAllocations
 }
 
+// return the cached assignable state of this node
+func (oc *Controller) isNodeEgressAssignable(nodeName string) bool {
+	if eNode, exists := oc.eIPC.allocator.cache[nodeName]; exists {
+		return eNode.isEgressAssignable
+	}
+	return false
+}
+
 func (oc *Controller) setNodeEgressAssignable(nodeName string, isAssignable bool) {
 	oc.eIPC.allocator.Lock()
 	defer oc.eIPC.allocator.Unlock()
