@@ -34,13 +34,14 @@ import (
 
 // OvnNode is the object holder for utilities meant for node management
 type OvnNode struct {
-	name         string
-	client       clientset.Interface
-	Kube         kube.Interface
-	watchFactory factory.NodeWatchFactory
-	stopChan     chan struct{}
-	recorder     record.EventRecorder
-	gateway      Gateway
+	name           string
+	client         clientset.Interface
+	Kube           kube.Interface
+	watchFactory   factory.NodeWatchFactory
+	stopChan       chan struct{}
+	recorder       record.EventRecorder
+	gateway        Gateway
+	currentEncapIP string
 }
 
 // NewNode creates a new controller for node management
@@ -168,21 +169,21 @@ func setOVSFlowTargets(node *kapi.Node) error {
 	return nil
 }
 
-func setupOVNNode(node *kapi.Node) error {
+func setupOVNNode(kapiNode *kapi.Node, ovnNode *OvnNode) error {
 	var err error
 
 	encapIP := config.Default.EncapIP
 	if encapIP == "" {
-		encapIP, err = util.GetNodePrimaryIP(node)
+		encapIP, err = util.GetNodePrimaryIP(kapiNode)
 		if err != nil {
-			return fmt.Errorf("failed to obtain local IP from node %q: %v", node.Name, err)
+			return fmt.Errorf("failed to obtain local IP from node %q: %v", kapiNode.Name, err)
 		}
-		config.Default.EncapIP = encapIP
 	} else {
 		if ip := net.ParseIP(encapIP); ip == nil {
 			return fmt.Errorf("invalid encapsulation IP provided %q", encapIP)
 		}
 	}
+	ovnNode.currentEncapIP = encapIP
 
 	setExternalIdsCmd := []string{
 		"set",
@@ -194,7 +195,7 @@ func setupOVNNode(node *kapi.Node) error {
 			config.Default.InactivityProbe),
 		fmt.Sprintf("external_ids:ovn-openflow-probe-interval=%d",
 			config.Default.OpenFlowProbe),
-		fmt.Sprintf("external_ids:hostname=\"%s\"", node.Name),
+		fmt.Sprintf("external_ids:hostname=\"%s\"", kapiNode.Name),
 		fmt.Sprintf("external_ids:ovn-monitor-all=%t", config.Default.MonitorAll),
 		fmt.Sprintf("external_ids:ovn-enable-lflow-cache=%t", config.Default.LFlowCacheEnable),
 	}
@@ -243,7 +244,7 @@ func setupOVNNode(node *kapi.Node) error {
 		return fmt.Errorf("error clearing stale ovs flow targets: %q", err)
 	}
 	// set new ovs flow targets if needed
-	err = setOVSFlowTargets(node)
+	err = setOVSFlowTargets(kapiNode)
 	if err != nil {
 		return fmt.Errorf("error setting ovs flow targets: %q", err)
 	}
@@ -356,7 +357,7 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 			}
 		}
 
-		err = setupOVNNode(node)
+		err = setupOVNNode(node, n)
 		if err != nil {
 			return err
 		}
@@ -536,6 +537,7 @@ func (n *OvnNode) Start(wg *sync.WaitGroup) error {
 			checkForStaleOVSInterfaces(n.name, n.watchFactory.(*factory.WatchFactory))
 		}, time.Minute, n.stopChan)
 		n.WatchEndpoints()
+		n.WatchNodes()
 	}
 
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
@@ -588,15 +590,92 @@ func (n *OvnNode) WatchEndpoints() {
 	}, nil)
 }
 
+// WatchNodes will watch all nodes. When the current node is updated, it will write a new encap IP
+// to OVS in case that the primary interface IP changed and in case  the encap IP is not overwritten by
+// configuration.
+func (n *OvnNode) WatchNodes() {
+	n.watchFactory.AddNodeHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: func(oldN, newN interface{}) {
+			// oldNode := old.(*kapi.Node)
+			newNode := newN.(*kapi.Node)
+
+			// Only look at the current node
+			if newNode.Name != n.name {
+				return
+			}
+
+			// Update the currentEncapIP
+			// Only update the current encap IP if it was not enforced by configuration
+			if ip := net.ParseIP(config.Default.EncapIP); ip == nil {
+				// Get the current encapsulation IP from the OvnNode object
+				currentEncapIP, err := n.GetCurrentEncapIP()
+				if err != nil {
+					klog.Errorf("Failed to get current OVS encap IP: %v", err)
+					return
+				}
+
+				// Get the current node primary IP
+				nodePrimaryIP, err := util.GetNodePrimaryIP(newNode)
+				if err != nil {
+					klog.Errorf("Failed to obtain local primary IP from node %q: %v", newNode.Name, err)
+					return
+				}
+
+				// If the current encap IP and the node primary IP are different ...
+				if currentEncapIP != nodePrimaryIP {
+					// ... set the current encap IP and write the change to OVS
+					if err := n.SetCurrentEncapIP(nodePrimaryIP); err != nil {
+						klog.Errorf("Failed to set current encap IP: %v", err)
+						return
+					}
+
+					if err = n.WriteCurrentEncapIP(); err != nil {
+						klog.Errorf("Failed to write current encap IP: %v", err)
+						return
+					}
+				}
+			}
+		},
+	}, nil)
+}
+
+// WriteCurrentEncapIP writes the current encap IP to OVS. This will propagate and
+// update of tunnel endpoint IPs if the IP changed.
+func (n *OvnNode) WriteCurrentEncapIP() error {
+	cmd := []string{
+		"set",
+		"Open_vSwitch",
+		".",
+		fmt.Sprintf("external_ids:ovn-encap-ip=%s", n.currentEncapIP),
+	}
+	_, stderr, err := util.RunOVSVsctl(cmd...)
+	if err != nil {
+		return fmt.Errorf("error setting OVS encap IP: %v\n  %q", err, stderr)
+	}
+
+	return nil
+}
+
+// SetCurrentEncapIP sets the current encap IP.
+func (n *OvnNode) SetCurrentEncapIP(ip string) error {
+	n.currentEncapIP = ip
+	return nil
+}
+
+// GetCurrentEncapIP gets this nodes' current encap IP.
+func (n *OvnNode) GetCurrentEncapIP() (string, error) {
+	return n.currentEncapIP, nil
+}
+
 // validateVTEPInterfaceMTU checks if the MTU of the interface that has ovn-encap-ip is big
 // enough to carry the `config.Default.MTU` and the Geneve header. If the MTU is not big
 // enough, it will taint the node with the value of `types.OvnK8sSmallMTUTaintKey`
 func (n *OvnNode) validateVTEPInterfaceMTU() error {
 	tooSmallMTUTaint := &kapi.Taint{Key: types.OvnK8sSmallMTUTaintKey, Effect: kapi.TaintEffectNoSchedule}
 
-	ovnEncapIP := net.ParseIP(config.Default.EncapIP)
+	ovnEncapIP := net.ParseIP(n.currentEncapIP)
 	if ovnEncapIP == nil {
-		return fmt.Errorf("the set OVN Encap IP is invalid: (%s)", config.Default.EncapIP)
+		return fmt.Errorf("the set OVN Encap IP is invalid: (%s)", n.currentEncapIP)
 	}
 	interfaceName, mtu, err := util.GetIFNameAndMTUForAddress(ovnEncapIP)
 	if err != nil {
