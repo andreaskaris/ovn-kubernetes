@@ -57,12 +57,12 @@ var _ = Describe("Node", func() {
 			netlinkOpsMock.On("LinkByIndex", 4).Return(netlinkLinkMock, nil)
 
 			ovnNode = &OvnNode{
-				name: nodeName,
-				Kube: kubeMock,
+				name:           nodeName,
+				Kube:           kubeMock,
+				currentEncapIP: "10.1.0.40",
 			}
 
 			config.Default.MTU = configDefaultMTU
-			config.Default.EncapIP = "10.1.0.40"
 
 			kubeMock.On("SetTaintOnNode", nodeName, mock.AnythingOfType("*v1.Taint")).Return(nil)
 			kubeMock.On("RemoveTaintFromNode", nodeName, mock.AnythingOfType("*v1.Taint")).Return(nil)
@@ -218,6 +218,7 @@ var _ = Describe("Node", func() {
 						},
 					},
 				}
+				ovnNode := OvnNode{}
 
 				fexec := ovntest.NewFakeExec()
 				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -244,7 +245,66 @@ var _ = Describe("Node", func() {
 				_, err = config.InitConfig(ctx, fexec, nil)
 				Expect(err).NotTo(HaveOccurred())
 
-				err = setupOVNNode(&node)
+				err = setupOVNNode(&node, &ovnNode)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+		It("uses config.Default.EncapIP if provided", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					nodeIP   string = "1.2.5.6"
+					nodeName string = "cannot.be.resolv.ed"
+					interval int    = 100000
+					ofintval int    = 180
+				)
+				node := kapi.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: nodeName,
+					},
+					Status: kapi.NodeStatus{
+						Addresses: []kapi.NodeAddress{
+							{
+								Type:    kapi.NodeExternalIP,
+								Address: nodeIP,
+							},
+						},
+					},
+				}
+				ovnNode := OvnNode{}
+				config.Default.EncapIP = "1.2.3.4"
+
+				fexec := ovntest.NewFakeExec()
+				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 set Open_vSwitch . "+
+						"external_ids:ovn-encap-type=geneve "+
+						"external_ids:ovn-encap-ip=%s "+
+						"external_ids:ovn-remote-probe-interval=%d "+
+						"external_ids:ovn-openflow-probe-interval=%d "+
+						"external_ids:hostname=\"%s\" "+
+						"external_ids:ovn-monitor-all=true "+
+						"external_ids:ovn-enable-lflow-cache=true",
+						config.Default.EncapIP, interval, ofintval, nodeName),
+				})
+				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: "ovs-vsctl --timeout=15 -- clear bridge br-int netflow" +
+						" -- " +
+						"clear bridge br-int sflow" +
+						" -- " +
+						"clear bridge br-int ipfix",
+				})
+				err := util.SetExec(fexec)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = config.InitConfig(ctx, fexec, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				err = setupOVNNode(&node, &ovnNode)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -278,6 +338,7 @@ var _ = Describe("Node", func() {
 						},
 					},
 				}
+				ovnNode := OvnNode{}
 
 				fexec := ovntest.NewFakeExec()
 				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -320,7 +381,7 @@ var _ = Describe("Node", func() {
 				Expect(err).NotTo(HaveOccurred())
 				config.Default.EncapPort = encapPort
 
-				err = setupOVNNode(&node)
+				err = setupOVNNode(&node, &ovnNode)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -351,6 +412,7 @@ var _ = Describe("Node", func() {
 						},
 					},
 				}
+				ovnNode := OvnNode{}
 
 				fexec := ovntest.NewFakeExec()
 				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -382,7 +444,7 @@ var _ = Describe("Node", func() {
 				config.Default.LFlowCacheEnable = false
 				config.Default.LFlowCacheLimit = 1000
 				config.Default.LFlowCacheLimitKb = 100000
-				err = setupOVNNode(&node)
+				err = setupOVNNode(&node, &ovnNode)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -416,6 +478,7 @@ var _ = Describe("Node", func() {
 						},
 					},
 				}
+				ovnNode := OvnNode{}
 
 				fexec := ovntest.NewFakeExec()
 				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -453,7 +516,7 @@ var _ = Describe("Node", func() {
 				config.Monitoring.IPFIXTargets = []config.HostPort{
 					{Host: &ipfixIP, Port: ipfixPort},
 				}
-				err = setupOVNNode(&node)
+				err = setupOVNNode(&node, &ovnNode)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -487,6 +550,7 @@ var _ = Describe("Node", func() {
 						},
 					},
 				}
+				ovnNode := OvnNode{}
 
 				fexec := ovntest.NewFakeExec()
 				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -527,7 +591,7 @@ var _ = Describe("Node", func() {
 				config.IPFIX.CacheActiveTimeout = 123
 				config.IPFIX.CacheMaxFlows = 456
 				config.IPFIX.Sampling = 789
-				err = setupOVNNode(&node)
+				err = setupOVNNode(&node, &ovnNode)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -558,6 +622,7 @@ var _ = Describe("Node", func() {
 						},
 					},
 				}
+				ovnNode := OvnNode{}
 
 				fexec := ovntest.NewFakeExec()
 				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -601,7 +666,7 @@ var _ = Describe("Node", func() {
 				config.IPFIX.Sampling = 0
 				Expect(err).NotTo(HaveOccurred())
 
-				err = setupOVNNode(&node)
+				err = setupOVNNode(&node, &ovnNode)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)

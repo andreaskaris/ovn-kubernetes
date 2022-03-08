@@ -39,6 +39,10 @@ type NodeWatchFactory interface {
 	AddFilteredEndpointsHandler(namespace string, sel labels.Selector, handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	RemoveEndpointsHandler(handler *Handler)
 
+	AddNodeHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
+	AddFilteredNodeHandler(sel labels.Selector, handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
+	RemoveNodeHandler(handler *Handler)
+
 	AddPodHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 	RemovePodHandler(handler *Handler)
 
