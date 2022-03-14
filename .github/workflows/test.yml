@@ -422,6 +422,7 @@ jobs:
           - "shard-conformance"
             # hybrid-overlay = multicast-enable = emptylb-enable = true
           - "control-plane"
+          - "node-ip-migration"
         ha: ["HA", "noHA"]
         gateway-mode: ["local", "shared"]
         ipfamily: ["ipv4", "ipv6", "dualstack"]
@@ -450,6 +451,11 @@ jobs:
          - {"second-bridge": "2br", "disable-snat-multiple-gws": "snatGW"}
          - {"second-bridge": "2br", "ha": "HA"}
          - {"second-bridge": "2br", "target": "control-plane"}
+         - {"target": "node-ip-migration"}
+        # include is processed after exclude and allows us to selectively readd excluded tests
+        include:
+         - {"target": "node-ip-migration", "ha": "noHA", "ipfamily": "ipv6", "disable-snat-multiple-gws": "SnatGW", "gateway-mode": "shared"}
+         - {"target": "node-ip-migration", "ha": "noHA", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW", "gateway-mode": "local"}
     needs: [ build-pr ]
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}"
@@ -551,7 +557,12 @@ jobs:
       run: |
         mkdir -p ${CI_RUN_LOG_CACHE}
         exec > >(tee -a ${CI_RUN_LOG_CACHE}/${CI_LOGS_GENERIC}) 2>&1
-        make -C test ${{ matrix.target }}
+        WHAT=""
+        if [ "${{matrix.target}}" == "node-ip-migration" ]; then
+          make -C test control-plane WHAT="Node IP address migration"
+        else
+          make -C test ${{ matrix.target }} $WHAT
+        fi
 
     # The following steps will always run unless the job is marked as completed
     - name: Upload Junit Reports
