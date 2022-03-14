@@ -51,6 +51,12 @@ if [ "$KIND_IPV6_SUPPORT" == true ]; then
   SKIPPED_TESTS+=$IPV6_SKIPPED_TESTS
 fi
 
+# Skip node IP address migration tests always
+if [ "$SKIPPED_TESTS" != "" ]; then
+	SKIPPED_TESTS+="|"
+fi
+SKIPPED_TESTS+="Node IP address migration"
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
