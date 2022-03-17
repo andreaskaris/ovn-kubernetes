@@ -41,12 +41,12 @@ fi
 # Store the answer in file .rerun-response.json.
 RESPONSE_CODE=$(curl --write-out '%{http_code}' --silent --output .rerun-response.json --request POST \
     --url "${RERUN_URL}" \
-    --header "authorization: Bearer ${GITHUB_TOKEN}" \
+    --header "authorization: Bearer a${GITHUB_TOKEN}" \
     --header "content-type: application/json")
 
 REACTION_URL="$(jq -r '.comment.url' ${GITHUB_EVENT_PATH})/reactions"
 REACTION_SYMBOL="rocket"
-if [[ ${RESPONSE_CODE} != 2* ]]; then
+if echo ${RESPONSE_CODE} | egrep -q '^2'; then
   REACTION_SYMBOL="confused"
 fi
 curl --request POST \
@@ -57,7 +57,7 @@ curl --request POST \
     --data '{ "content" : "'${REACTION_SYMBOL}'" }'
 
 # In case we received a non 2xx response code, relay the error message as a comment.
-if [[ ${RESPONSE_CODE} != 2* ]]; then
+if echo ${RESPONSE_CODE} | egrep -q '^2'; then
   COMMENTS_URL=$(jq -r '.issue.comments_url' ${GITHUB_EVENT_PATH})
   RESPONSE_MESSAGE=$(jq -r '.message' .rerun-response.json)
   curl --request POST \
