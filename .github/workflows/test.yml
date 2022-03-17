@@ -44,6 +44,7 @@ jobs:
     - name: Restore master image cache
       id: image_cache_master
       run: |
+        set -x
         r=$((1 + $RANDOM % 10))
         if [ $r -le 5 ]; then 
           echo failed
@@ -59,19 +60,9 @@ jobs:
     - name: Restore master image cache
       id: image_cache_master
       run: |
+        set -x
         r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then 
-          echo failed
-          exit 1
-        fi
-        echo success
-  
-    - name: Check if master image build is needed
-      id: is_master_image_build_needed
-      continue-on-error: false
-      run: |
-        r=$((1 + $RANDOM % 10))
-        if [ $r -le 5 ]; then 
+        if [ $r -le 4 ]; then 
           echo failed
           exit 1
         fi
