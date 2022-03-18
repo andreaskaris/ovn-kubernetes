@@ -60,7 +60,7 @@ jobs:
         set -x
         if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_MASTER_TAR}.gz ]; then
             mkdir -p ${CI_DIST_IMAGES_OUTPUT}
-            cp ${CI_IMAGE_CACHE}/${CI_IMAGE_MASTER_TAR}.gz ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_MASTER_TAR}.gz
+            cp ${CI_IMAGE_CACHE}/${CI_IMAGE_MASTER_TAR}.gz ${CI_DIST_IMAGES_OUTPU}/${CI_IMAGE_MASTER_TAR}.gz
             gunzip ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_MASTER_TAR}.gz
             echo "::set-output name=MASTER_IMAGE_RESTORED::true"
         fi
@@ -532,8 +532,6 @@ jobs:
 
     - name: Run Dual-Stack Control-Plane Tests
       run: |
-        mkdir -p ${CI_RUN_LOG_CACHE}
-        exec > >(tee -a ${CI_RUN_LOG_CACHE}/${CI_LOGS_DUAL_STACK}) 2>&1
         KIND_IPV4_SUPPORT="true"
         KIND_IPV6_SUPPORT="true"
         make -C test control-plane WHAT="DualStack"
