@@ -1942,17 +1942,17 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 						}
 
 						// After the DualStack upgrade, we might hit a timeout on the Service.
-						// Give this 5 tries to settle
+						// Give this up to 2 minutes to settle
 						// This could be implemented way more elegantly with gomega 1.14.0 (dependency on k8s 1.22) and above, see:
 						// https://github.com/onsi/gomega/commit/2f04e6e3467d2c0c695786c3e7880f1e940274cf#
 						ginkgo.By(fmt.Sprintf("Waiting for the service to stabilize after the DualStack upgrade on address %s (node %s)", nodeAddress.Address, node.Name))
 						gomega.Eventually(func() (r bool) {
 							failures := gomega.InterceptGomegaFailures(func() {
 								framework.Logf("Trying to poke node %s with address %s and port %s/%d", node.Name, nodeAddress.Address, protocol, nodePort)
-								pokeEndpointHostname(clientContainerName, protocol, nodeAddress.Address, nodePort)
+								pokeEndpointHostnameWithTimeout(clientContainerName, protocol, nodeAddress.Address, nodePort, 4)
 							})
 							return len(failures) == 0
-						}, 5*time.Second, 1*time.Second).Should(gomega.BeTrue())
+						}, 120*time.Second, 5*time.Second).Should(gomega.BeTrue())
 
 						ginkgo.By("Hitting the nodeport on " + node.Name + " and reaching all the endpoints " + protocol)
 						responses := sets.NewString()
