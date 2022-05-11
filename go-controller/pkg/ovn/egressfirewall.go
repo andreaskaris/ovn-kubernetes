@@ -305,7 +305,7 @@ func (oc *Controller) syncEgressFirewall(egressFirewalls []interface{}) {
 	}
 }
 
-func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.EgressFirewall, txn *util.NBTxn) error {
+func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.EgressFirewall, txn *util.NBTxn, ignoreUuidsOnCreation bool) error {
 	klog.Infof("Adding egressFirewall %s in namespace %s", egressFirewall.Name, egressFirewall.Namespace)
 
 	ef := cloneEgressFirewall(egressFirewall)
@@ -354,7 +354,7 @@ func (oc *Controller) addEgressFirewall(egressFirewall *egressfirewallapi.Egress
 		return fmt.Errorf("cannot Ensure that addressSet for namespace %s exists %v", egressFirewall.Namespace, err)
 	}
 	ipv4HashedAS, ipv6HashedAS := addressset.MakeAddressSetHashNames(egressFirewall.Namespace)
-	err = oc.addEgressFirewallRules(ef, ipv4HashedAS, ipv6HashedAS, egressFirewallStartPriorityInt, txn)
+	err = oc.addEgressFirewallRules(ef, ipv4HashedAS, ipv6HashedAS, egressFirewallStartPriorityInt, txn, ignoreUuidsOnCreation)
 	if err != nil {
 		return err
 	}
@@ -367,7 +367,7 @@ func (oc *Controller) updateEgressFirewall(oldEgressFirewall, newEgressFirewall 
 	if updateErrors != nil {
 		return updateErrors
 	}
-	updateErrors = oc.addEgressFirewall(newEgressFirewall, txn)
+	updateErrors = oc.addEgressFirewall(newEgressFirewall, txn, true)
 	return updateErrors
 }
 
@@ -413,7 +413,7 @@ func (oc *Controller) updateEgressFirewallWithRetry(egressfirewall *egressfirewa
 	return nil
 }
 
-func (oc *Controller) addEgressFirewallRules(ef *egressFirewall, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string, efStartPriority int, txn *util.NBTxn) error {
+func (oc *Controller) addEgressFirewallRules(ef *egressFirewall, hashedAddressSetNameIPv4, hashedAddressSetNameIPv6 string, efStartPriority int, txn *util.NBTxn, ignoreUuidsOnCreation bool) error {
 	for _, rule := range ef.egressRules {
 		var action string
 		var matchTargets []matchTarget
@@ -443,7 +443,7 @@ func (oc *Controller) addEgressFirewallRules(ef *egressFirewall, hashedAddressSe
 			}
 		}
 		match := generateMatch(hashedAddressSetNameIPv4, hashedAddressSetNameIPv6, matchTargets, rule.ports)
-		err := oc.createEgressFirewallRules(efStartPriority-rule.id, match, action, ef.namespace, txn)
+		err := oc.createEgressFirewallRules(efStartPriority-rule.id, match, action, ef.namespace, txn, ignoreUuidsOnCreation)
 		if err != nil {
 			return err
 		}
@@ -453,7 +453,7 @@ func (oc *Controller) addEgressFirewallRules(ef *egressFirewall, hashedAddressSe
 
 // createEgressFirewallRules uses the previously generated elements and creates the
 // logical_router_policy/join_switch_acl for a specific egressFirewallRouter
-func (oc *Controller) createEgressFirewallRules(priority int, match, action, externalID string, txn *util.NBTxn) error {
+func (oc *Controller) createEgressFirewallRules(priority int, match, action, externalID string, txn *util.NBTxn, ignoreUuidsOnCreation bool) error {
 	logicalSwitches := []string{}
 	if config.Gateway.Mode == config.GatewayModeLocal {
 		nodes, err := oc.watchFactory.GetNodes()
@@ -466,11 +466,15 @@ func (oc *Controller) createEgressFirewallRules(priority int, match, action, ext
 	} else {
 		logicalSwitches = append(logicalSwitches, types.OVNJoinSwitch)
 	}
-	uuids, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
-		"--columns=_uuid", "--format=table", "find", "ACL", match, "action="+action,
-		fmt.Sprintf("external-ids:egressFirewall=%s", externalID))
-	if err != nil {
-		return fmt.Errorf("error executing find ACL command, stderr: %q, %+v", stderr, err)
+	uuids := ""
+	if !ignoreUuidsOnCreation {
+		foundUuids, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
+			"--columns=_uuid", "--format=table", "find", "ACL", match, "action="+action,
+			fmt.Sprintf("external-ids:egressFirewall=%s", externalID))
+		if err != nil {
+			return fmt.Errorf("error executing find ACL command, stderr: %q, %+v", stderr, err)
+		}
+		uuids = foundUuids
 	}
 	sort.Strings(logicalSwitches)
 	for _, logicalSwitch := range logicalSwitches {

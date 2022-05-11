@@ -775,7 +775,7 @@ func (oc *Controller) WatchEgressFirewall() *factory.Handler {
 		AddFunc: func(obj interface{}) {
 			egressFirewall := obj.(*egressfirewall.EgressFirewall).DeepCopy()
 			txn := util.NewNBTxn()
-			addErrors := oc.addEgressFirewall(egressFirewall, txn)
+			addErrors := oc.addEgressFirewall(egressFirewall, txn, false)
 			if addErrors != nil {
 				klog.Error(addErrors)
 				egressFirewall.Status.Status = egressFirewallAddError
