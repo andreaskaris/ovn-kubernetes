@@ -100,6 +100,7 @@ usage() {
     echo "                 [-ric | --run-in-container |"
     echo "                 [-cn | --cluster-name |"
     echo "                 [-ehp|--egress-ip-healthcheck-port <num>]"
+    echo "                 [-is | --ipsec]"
     echo "                 [-h]]"
     echo ""
     echo "-cf  | --config-file                Name of the KIND J2 configuration file."
@@ -143,6 +144,7 @@ usage() {
     echo "-cn  | --cluster-name               Configure the kind cluster's name"
     echo "-ric | --run-in-container           Configure the script to be run from a docker container, allowing it to still communicate with the kind controlplane" 
     echo "-ehp | --egress-ip-healthcheck-port TCP port used for gRPC session by egress IP node check. DEFAULT: 9107 (Use "0" for legacy dial to port 9)."
+    echo "-is  | --ipsec                      Enable IPsec encryption (spawns ovn-ipsec pods)"
     echo "--delete                      	    Delete current cluster"
     echo ""
 }
