@@ -59,12 +59,10 @@ require (
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b
 	kubevirt.io/api v1.0.0-alpha.0
 	sigs.k8s.io/controller-runtime v0.18.4
+	sigs.k8s.io/knftables v0.0.18
 	sigs.k8s.io/network-policy-api v0.1.5
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1
 )
-
-// OCPHACK
-require sigs.k8s.io/knftables v0.0.16
 
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
